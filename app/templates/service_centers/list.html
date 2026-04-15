@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="data-page">
+    <h1>Сервисные центры</h1>
+
+    {% if can_create_sc|default(false) %}
+      <p style="margin: 0 0 12px 0;"><a href="/service_centers/create">Создать сервисный центр</a></p>
+    {% endif %}
+
+    <div class="card">
+      <form method="get" action="/service_centers" class="data-filters">
+        <label>
+          Название
+          <input type="text" name="name" value="{{ filters.name }}" placeholder="Фильтр по имени" autocomplete="off" />
+        </label>
+        <label>
+          Franchisee UID
+          <input type="text" name="franchisee_uid" value="{{ filters.franchisee_uid }}" placeholder="UUID (в RMS — franchisee_id)" autocomplete="off" />
+        </label>
+        <label class="chk-row">
+          <input type="checkbox" name="show_deleted" value="1" {% if filters.show_deleted %}checked{% endif %} />
+          Показать удалённые
+        </label>
+        <button type="submit">Применить</button>
+      </form>
+    </div>
+
+    {% if error %}
+      {% set rms_error_prefix = "Не удалось загрузить данные: " %}
+      {% include "includes/rms_inline_error.html" %}
+    {% elif not items %}
+      <div class="card">Нет данных</div>
+    {% else %}
+      <div class="card data-table-card" data-table-filter-wrap>
+        <div class="table-filter-bar">
+          <label for="tbl-filter-sc">Поиск в таблице</label>
+          <input
+            type="search"
+            id="tbl-filter-sc"
+            data-table-filter
+            placeholder="Текст по всем колонкам загруженной страницы…"
+            autocomplete="off"
+          />
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th class="col-num">№</th>
+                <th>Название</th>
+                <th>Адрес / гео</th>
+                <th>Franchisee UID</th>
+                <th>Удалён</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in items %}
+                <tr>
+                  <td class="col-num">{{ loop.index }}</td>
+                  <td class="col-name">
+                    {% if item.uid %}
+                      <a href="/service_centers/{{ item.uid }}">{{ item.name or "—" }}</a>
+                    {% else %}
+                      {{ item.name or "—" }}
+                    {% endif %}
+                  </td>
+                  <td class="col-addr">
+                    {% if item.address is mapping %}
+                      {% if item.address.unrestricted_value is defined and item.address.unrestricted_value %}
+                        {{ item.address.unrestricted_value }}
+                      {% else %}
+                        {% set geo = item.address.geo_object if (item.address.geo_object is defined and item.address.geo_object is mapping) else {} %}
+                        <span title="В списке v2 API нет текста адреса — только id в org registry и координаты">
+                          {% if item.address.address_id is defined %}
+                            Реестр: <strong>{{ item.address.address_id }}</strong>
+                          {% endif %}
+                          {% if geo.geo_lat is defined and geo.geo_lon is defined %}
+                            {% if item.address.address_id is defined %} · {% endif %}
+                            {{ geo.geo_lat }}, {{ geo.geo_lon }}
+                          {% endif %}
+                          {% if not (item.address.address_id is defined) and geo.geo_lat is not defined %}—{% endif %}
+                        </span>
+                      {% endif %}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </td>
+                  <td class="col-mono">{{ item.franchisee_uid or "—" }}</td>
+                  <td>
+                    {% if item.is_deleted %}
+                      <span class="badge-del yes">Да</span>
+                    {% else %}
+                      <span class="badge-del no">Нет</span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="card data-pager">
+      {% if page.has_more and page.next_cursor %}
+        <a
+          href="/service_centers?name={{ filters.name|urlencode }}&franchisee_uid={{ filters.franchisee_uid|urlencode }}{% if filters.show_deleted %}&show_deleted=1{% endif %}&cursor={{ page.next_cursor|urlencode }}"
+        >Следующая страница →</a>
+      {% else %}
+        <span class="muted">Конец списка</span>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

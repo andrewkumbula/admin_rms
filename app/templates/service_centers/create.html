@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Новый сервисный центр</h1>
+  <p class="toolbar"><a class="back-link" href="/service_centers">← К списку сервисных центров</a></p>
+
+  {% if form_error %}
+    {% set error = form_error %}
+    {% include "includes/rms_inline_error.html" %}
+  {% endif %}
+
+  <div class="card">
+    <p class="muted">
+      RMS: <code>POST /api/v2/service_center</code> с телом <code>{"name","address"}</code>.
+      Поле <code>address</code> — объект для org registry (как из подсказок адреса); минимальный набор полей зависит от окружения.
+    </p>
+    <form method="post" action="/service_centers/create">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+      <p>
+        <label for="name">Название *</label><br />
+        <input id="name" name="name" type="text" required style="width:100%; max-width:400px;" value="{{ form_values.name if form_values else '' }}" />
+      </p>
+      <p>
+        <label for="address_json">Адрес (JSON) *</label><br />
+        <textarea id="address_json" name="address_json" rows="12" style="width:100%; max-width:640px; font-family:monospace;">{% if form_values %}{{ form_values.address_json }}{% else %}{
+  "unrestricted_value": "г Москва, ул Примерная, д 1",
+  "geo_lat": 55.751244,
+  "geo_lon": 37.618423,
+  "city_name": "Москва",
+  "street_name": "Примерная",
+  "house_name": "1"
+}{% endif %}</textarea>
+      </p>
+      <button type="submit">Создать</button>
+    </form>
+  </div>
+{% endblock %}

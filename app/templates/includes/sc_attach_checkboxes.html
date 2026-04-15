@@ -1,0 +1,50 @@
+{# Ожидает: sc_attach_options — список {uid, label} #}
+<p class="muted" style="margin-top: 0;">
+  Отметьте один или несколько сервисных центров. В списке только центры <strong>без франчайзи</strong> (ещё ни к кому не привязаны).
+</p>
+<p>
+  <input
+    type="search"
+    id="fr-sc-filter"
+    placeholder="Поиск по названию или UID…"
+    style="width: 100%; max-width: 420px"
+    autocomplete="off"
+  />
+</p>
+<div
+  style="max-height: 280px; overflow-y: auto; border: 1px solid var(--border, #e2e8f0); border-radius: 8px; padding: 8px"
+>
+  {% for o in sc_attach_options %}
+    <label
+      class="fr-sc-row"
+      data-label="{{ (o.label ~ ' ' ~ o.uid ~ ' ' ~ (o.address_hint or ''))|lower }}"
+      style="display: flex; gap: 8px; align-items: flex-start; padding: 6px 4px; cursor: pointer"
+    >
+      <input type="checkbox" name="service_center_ids" value="{{ o.uid }}" />
+      <span>
+        {{ o.label }}
+        <span class="muted" style="font-size: 0.75rem">{{ o.uid }}</span>
+        {% if o.address_hint %}
+          <br /><span class="muted" style="font-size: 0.7rem">{{ o.address_hint }}</span>
+        {% endif %}
+      </span>
+    </label>
+  {% else %}
+    <p class="muted" style="margin: 0">
+      Нет свободных центров: все сервисные центры из выборки уже привязаны к франчайзи, либо список не загрузился.
+    </p>
+  {% endfor %}
+</div>
+<script>
+  (function () {
+    var inp = document.getElementById("fr-sc-filter");
+    if (!inp) return;
+    inp.addEventListener("input", function () {
+      var q = (inp.value || "").trim().toLowerCase();
+      document.querySelectorAll(".fr-sc-row").forEach(function (row) {
+        var t = row.getAttribute("data-label") || "";
+        row.style.display = !q || t.indexOf(q) !== -1 ? "" : "none";
+      });
+    });
+  })();
+</script>

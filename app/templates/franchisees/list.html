@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="data-page">
+    <h1>Франчайзи</h1>
+
+    {% if fr_msg %}
+      <div class="alert {% if fr_msg_type == 'error' %}alert-error{% elif fr_msg_type == 'success' %}alert-success{% else %}alert-info{% endif %}">
+        {{ fr_msg }}
+      </div>
+    {% endif %}
+
+    <div class="card">
+      <form method="get" action="/franchisees" class="data-filters">
+        <label>
+          Название
+          <input id="f_name" type="text" name="name" value="{{ filters.name }}" placeholder="Поиск" autocomplete="off" />
+        </label>
+        <label>
+          ИНН (org_id)
+          <input id="f_org" type="text" name="org_id" value="{{ filters.org_id }}" placeholder="число в RMS" autocomplete="off" />
+        </label>
+        <label>
+          user_id (Keycloak)
+          <input id="f_user" type="text" name="user_id" value="{{ filters.user_id }}" autocomplete="off" />
+        </label>
+        <label class="chk-row">
+          <input type="checkbox" name="show_deleted" value="1" {% if filters.show_deleted %}checked{% endif %} />
+          Показать удалённые
+        </label>
+        <button type="submit">Искать</button>
+      </form>
+    </div>
+
+    {% if can_create %}
+      <p><a href="/franchisees/new">Создать франчайзи</a></p>
+    {% endif %}
+
+    {% if error %}
+      {% set rms_error_prefix = "Не удалось загрузить данные: " %}
+      {% include "includes/rms_inline_error.html" %}
+    {% elif not items %}
+      <div class="card">Нет записей по текущим фильтрам</div>
+    {% else %}
+      <div class="card data-table-card" data-table-filter-wrap>
+        <div class="table-filter-bar">
+          <label for="tbl-filter-fr">Поиск в таблице</label>
+          <input
+            type="search"
+            id="tbl-filter-fr"
+            data-table-filter
+            placeholder="Текст по всем колонкам загруженной страницы…"
+            autocomplete="off"
+          />
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th class="col-num">№</th>
+                <th>Название</th>
+                <th>ИНН (org_id)</th>
+                <th>Удалён</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in items %}
+                <tr>
+                  <td class="col-num">{{ loop.index }}</td>
+                  <td class="col-name">
+                    {% if item.uid %}
+                      <a href="/franchisees/{{ item.uid }}">{{ item.name or "—" }}</a>
+                    {% else %}
+                      {{ item.name or "—" }}
+                    {% endif %}
+                  </td>
+                  <td class="col-mono">
+                    {% if item.org_id is not none and (item.org_id|string)|trim %}
+                      {{ item.org_id }}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if item.is_deleted %}
+                      <span class="badge-del yes">Да</span>
+                    {% else %}
+                      <span class="badge-del no">Нет</span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% if page.has_more and page.next_cursor %}
+        <div class="card data-pager">
+          <a
+            href="/franchisees?name={{ filters.name|urlencode }}&org_id={{ filters.org_id|urlencode }}&user_id={{ filters.user_id|urlencode }}{% if filters.show_deleted %}&show_deleted=1{% endif %}&cursor={{ page.next_cursor|urlencode }}"
+          >Следующая страница →</a>
+        </div>
+      {% endif %}
+    {% endif %}
+  </div>
+{% endblock %}

@@ -1,0 +1,212 @@
+{# Переменные: suffix, hidden_name, field_label, options, selected_uid, selected_label, require_sc, form_id #}
+<label for="sc-in-{{ suffix }}" style="display: block; font-weight: 600; margin-bottom: 6px;">{{ field_label }}</label>
+<style>
+  .sc-cb-wrap {
+    position: relative;
+    width: 100%;
+    max-width: 520px;
+    margin-top: 6px;
+  }
+  .sc-cb-in {
+    width: 100%;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid #cbd5e1;
+    font-family: inherit;
+    font-size: 0.9rem;
+    box-sizing: border-box;
+  }
+  .sc-cb-in:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 1px;
+    border-color: var(--primary);
+  }
+  .sc-cb-dd {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 60;
+    margin: 0;
+    padding: 4px 0;
+    list-style: none;
+    max-height: 260px;
+    overflow-y: auto;
+    background: var(--surface, #fff);
+    border: 1px solid var(--border, #e2e8f0);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
+  }
+  .sc-cb-dd[hidden] {
+    display: none !important;
+  }
+  .sc-cb-dd li {
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+  .sc-cb-dd li:hover {
+    background: #eff6ff;
+  }
+</style>
+<input type="hidden" name="{{ hidden_name }}" id="h-sc-{{ suffix }}" value="{{ selected_uid or '' }}" />
+<div>
+  <div class="sc-cb-wrap" id="sc-cb-root-{{ suffix }}" role="combobox" aria-expanded="false" aria-haspopup="listbox">
+    <input
+      type="text"
+      id="sc-in-{{ suffix }}"
+      class="sc-cb-in"
+      autocomplete="off"
+      value="{{ selected_label }}"
+      placeholder="Начните вводить название или выберите из списка…"
+      aria-autocomplete="list"
+      aria-controls="sc-list-{{ suffix }}"
+    />
+    <ul class="sc-cb-dd" id="sc-list-{{ suffix }}" role="listbox" hidden></ul>
+  </div>
+</div>
+<script type="application/json" id="sc-json-{{ suffix }}">{{ options|tojson }}</script>
+<script>
+  (function () {
+    var suffix = {{ suffix|tojson }};
+    var requireSc = {{ require_sc|tojson }};
+    var formId = {{ form_id|tojson }};
+    var items = [];
+    try {
+      items = JSON.parse(document.getElementById("sc-json-" + suffix).textContent || "[]");
+    } catch (e) {
+      items = [];
+    }
+    var root = document.getElementById("sc-cb-root-" + suffix);
+    var input = document.getElementById("sc-in-" + suffix);
+    var list = document.getElementById("sc-list-" + suffix);
+    var hidden = document.getElementById("h-sc-" + suffix);
+    if (!root || !input || !list || !hidden) return;
+
+    function renderDropdown() {
+      var q = (input.value || "").trim().toLowerCase();
+      list.innerHTML = "";
+      var n = 0;
+      var max = 100;
+      for (var i = 0; i < items.length && n < max; i++) {
+        var it = items[i];
+        if (q && String(it.label || "").toLowerCase().indexOf(q) === -1) continue;
+        var li = document.createElement("li");
+        li.setAttribute("role", "option");
+        li.setAttribute("data-uid", it.uid);
+        li.textContent = it.label;
+        li.addEventListener("mousedown", function (e) {
+          e.preventDefault();
+        });
+        li.addEventListener("click", function () {
+          hidden.value = this.getAttribute("data-uid") || "";
+          input.value = this.textContent || "";
+          list.hidden = true;
+        });
+        list.appendChild(li);
+        n++;
+      }
+      list.hidden = list.children.length === 0;
+    }
+
+    input.addEventListener("input", function () {
+      if (hidden.value) {
+        var match = null;
+        for (var j = 0; j < items.length; j++) {
+          if (items[j].uid === hidden.value) {
+            match = items[j].label;
+            break;
+          }
+        }
+        if (match !== null && input.value !== match) hidden.value = "";
+      }
+      renderDropdown();
+    });
+    input.addEventListener("focus", function () {
+      renderDropdown();
+    });
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") list.hidden = true;
+    });
+    document.addEventListener("click", function (e) {
+      if (!root.contains(e.target)) list.hidden = true;
+    });
+
+    function labelForUid(uid) {
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].uid === uid) return items[i].label;
+      }
+      return null;
+    }
+
+    function resolveUidFromInput(entityName) {
+      var tin = (input.value || "").trim();
+      if (!tin) {
+        hidden.value = "";
+        return true;
+      }
+      var tlow = tin.toLowerCase();
+      if (hidden.value) {
+        var lab = labelForUid(hidden.value);
+        if (lab !== null && String(lab).toLowerCase() === tlow) return true;
+      }
+      function collect(pred) {
+        var out = [];
+        for (var i = 0; i < items.length; i++) {
+          if (pred(items[i])) out.push(items[i]);
+        }
+        return out;
+      }
+      var exact = collect(function (it) {
+        return String(it.label || "").toLowerCase() === tlow;
+      });
+      if (exact.length === 1) {
+        hidden.value = exact[0].uid;
+        input.value = exact[0].label;
+        return true;
+      }
+      var starts = collect(function (it) {
+        return String(it.label || "").toLowerCase().indexOf(tlow) === 0;
+      });
+      if (starts.length === 1) {
+        hidden.value = starts[0].uid;
+        input.value = starts[0].label;
+        return true;
+      }
+      var subs = collect(function (it) {
+        return String(it.label || "").toLowerCase().indexOf(tlow) !== -1;
+      });
+      if (subs.length === 1) {
+        hidden.value = subs[0].uid;
+        input.value = subs[0].label;
+        return true;
+      }
+      if (subs.length > 1) {
+        window.alert(
+          "По «" + tin + "» найдено несколько сервисных центров. Уточните название или выберите из списка."
+        );
+        return false;
+      }
+      window.alert(
+        "«" +
+          tin +
+          "» не найдено среди загруженных сервисных центров. Выберите из списка или проверьте написание."
+      );
+      return false;
+    }
+
+    var form = document.getElementById(formId);
+    if (form) {
+      form.addEventListener("submit", function (e) {
+        if (!resolveUidFromInput("СЦ")) {
+          e.preventDefault();
+          return;
+        }
+        if (requireSc && !(hidden.value || "").trim()) {
+          e.preventDefault();
+          window.alert("Выберите сервисный центр из списка.");
+        }
+      });
+    }
+  })();
+</script>

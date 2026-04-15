@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Новый склад</h1>
+  <p class="toolbar"><a class="back-link" href="/warehouses">← К списку складов</a></p>
+
+  {% if form_error %}
+    {% set error = form_error %}
+    {% include "includes/rms_inline_error.html" %}
+  {% endif %}
+
+  <div class="card">
+    <p class="muted">RMS: <code>POST /api/v1/warehouse</code>. Если указан <code>rms_uid</code>, склад привязывается к СЦ (не более одного склада на СЦ).</p>
+    <form id="wh-new-form" method="post" action="/warehouses/new">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+      <p>
+        <label for="name">Название *</label><br />
+        <input id="name" name="name" type="text" required style="width:100%; max-width:400px;" value="{{ form_values.name if form_values else '' }}" />
+      </p>
+      <p>
+        {% set suffix = "whn" %}
+        {% set hidden_name = "rms_uid" %}
+        {% set field_label = "Сервисный центр (rms_uid), необязательно" %}
+        {% set options = sc_options %}
+        {% set selected_uid = selected_rms_uid|default('') %}
+        {% set selected_label = selected_sc_label|default('') %}
+        {% set require_sc = false %}
+        {% set form_id = "wh-new-form" %}
+        {% include "includes/sc_combobox_field.html" %}
+      </p>
+      <p>
+        <label for="acceptance_time">acceptance_time</label><br />
+        <input id="acceptance_time" name="acceptance_time" type="text" value="{{ form_values.acceptance_time if form_values else '0' }}" style="width:120px;" />
+      </p>
+      <button type="submit">Создать</button>
+    </form>
+  </div>
+{% endblock %}

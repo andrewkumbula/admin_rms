@@ -1,0 +1,450 @@
+{% extends "base.html" %}
+{% block head_extra %}
+  <style>
+    .tc-combobox {
+      position: relative;
+      width: 100%;
+      max-width: 520px;
+      margin-top: 6px;
+    }
+    .tc-combobox-in {
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid #cbd5e1;
+      font-family: inherit;
+      font-size: 0.9rem;
+      box-sizing: border-box;
+    }
+    .tc-combobox-in:focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: 1px;
+      border-color: var(--primary);
+    }
+    .tc-combobox-dropdown {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: calc(100% + 4px);
+      z-index: 60;
+      margin: 0;
+      padding: 4px 0;
+      list-style: none;
+      max-height: 260px;
+      overflow-y: auto;
+      background: var(--surface, #fff);
+      border: 1px solid var(--border, #e2e8f0);
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
+    }
+    .tc-combobox-dropdown[hidden] {
+      display: none !important;
+    }
+    .tc-combobox-dropdown li {
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    .tc-combobox-dropdown li:hover {
+      background: #eff6ff;
+    }
+    .tc-filter-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-top: 8px;
+    }
+  </style>
+{% endblock %}
+{% block content %}
+  <div class="data-page">
+    <p class="toolbar"><a class="back-link" href="/dictionaries">← Справочники</a></p>
+    <h1>Техкарты</h1>
+
+    {% if tc_msg %}
+      <div class="alert {% if tc_msg_type == 'error' %}alert-error{% elif tc_msg_type == 'success' %}alert-success{% else %}alert-info{% endif %}">
+        {{ tc_msg }}
+      </div>
+    {% endif %}
+
+    {% if can_create %}
+      <div class="card">
+        <h3 style="margin-top:0;">Создать техкарту</h3>
+        <p class="muted" style="margin-top:0;">
+          Вызов <code>POST /api/v1/tech_specification</code> с одной связкой: работа + тип ресурса + бренд + количество.
+        </p>
+        <form id="tc-create-form" method="post" action="/dictionaries/tech_cards/create">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <input type="hidden" name="work_uid" id="h-create-work-uid" value="" />
+          <input type="hidden" name="brand_uid" id="h-create-brand-uid" value="" />
+          <input type="hidden" name="resource_type_uid" id="h-create-rt-uid" value="" />
+          <div class="data-filters" style="align-items: flex-start; flex-direction: column; gap: 16px;">
+            <div style="width:100%; max-width:520px;">
+              <label for="tc-create-work-in" style="font-weight:600;">Работа</label>
+              <div class="tc-combobox" id="tc-create-work-combo" role="combobox" aria-expanded="false" aria-haspopup="listbox">
+                <input type="text" id="tc-create-work-in" class="tc-combobox-in" autocomplete="off" placeholder="Введите работу или выберите из списка…" aria-autocomplete="list" aria-controls="tc-create-work-list" />
+                <ul class="tc-combobox-dropdown" id="tc-create-work-list" role="listbox" hidden></ul>
+              </div>
+            </div>
+            <div style="width:100%; max-width:520px;">
+              <label for="tc-create-brand-in" style="font-weight:600;">Бренд</label>
+              <div class="tc-combobox" id="tc-create-brand-combo" role="combobox" aria-expanded="false" aria-haspopup="listbox">
+                <input type="text" id="tc-create-brand-in" class="tc-combobox-in" autocomplete="off" placeholder="Введите бренд или выберите из списка…" aria-autocomplete="list" aria-controls="tc-create-brand-list" />
+                <ul class="tc-combobox-dropdown" id="tc-create-brand-list" role="listbox" hidden></ul>
+              </div>
+            </div>
+            <div style="width:100%; max-width:520px;">
+              <label for="tc-create-rt-in" style="font-weight:600;">Тип ресурса</label>
+              <div class="tc-combobox" id="tc-create-rt-combo" role="combobox" aria-expanded="false" aria-haspopup="listbox">
+                <input type="text" id="tc-create-rt-in" class="tc-combobox-in" autocomplete="off" placeholder="Введите тип ресурса или выберите из списка…" aria-autocomplete="list" aria-controls="tc-create-rt-list" />
+                <ul class="tc-combobox-dropdown" id="tc-create-rt-list" role="listbox" hidden></ul>
+              </div>
+            </div>
+            <div style="width:100%; max-width:220px;">
+              <label for="tc-create-qty" style="font-weight:600;">Количество</label>
+              <input id="tc-create-qty" type="number" min="1" step="1" name="quantity" value="1" required />
+            </div>
+            <div class="tc-filter-actions">
+              <button type="submit">Создать техкарту</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    {% endif %}
+
+    <div class="card">
+      <h3 style="margin-top:0;">Фильтр по бренду и работе (через API RMS)</h3>
+      <p class="muted" style="margin-top:0;">
+        Подсказки из <code>/api/v1/brands</code> и <code>/api/v1/works</code>. Можно выбрать пункт в списке или ввести название и нажать «Применить фильтры»:
+        при отправке название сопоставляется со справочником (точное → начало строки → вхождение; при нескольких совпадениях нужно уточнить).
+        Запрос уходит на <code>/api/v1/tech_specification_list</code> с <code>brand_uid</code> / <code>work_uid</code> по всей базе техкарт, с пагинацией курсором.
+      </p>
+      <form id="tc-filters" method="get" action="/dictionaries/tech_cards">
+        <input type="hidden" name="brand_uid" id="h-brand-uid" value="{{ selected_brand_uid }}" />
+        <input type="hidden" name="work_uid" id="h-work-uid" value="{{ selected_work_uid }}" />
+        <div class="data-filters" style="align-items: flex-start; flex-direction: column; gap: 18px;">
+          <div style="width:100%; max-width:520px;">
+            <label for="tc-brand-in" style="font-weight:600;">Бренд авто</label>
+            <div class="tc-combobox" id="tc-brand-combo" role="combobox" aria-expanded="false" aria-haspopup="listbox">
+              <input
+                type="text"
+                id="tc-brand-in"
+                class="tc-combobox-in"
+                autocomplete="off"
+                value="{{ selected_brand_label }}"
+                placeholder="Введите название или выберите из списка…"
+                aria-autocomplete="list"
+                aria-controls="tc-brand-list"
+              />
+              <ul class="tc-combobox-dropdown" id="tc-brand-list" role="listbox" hidden></ul>
+            </div>
+          </div>
+          <div style="width:100%; max-width:520px;">
+            <label for="tc-work-in" style="font-weight:600;">Работа</label>
+            <div class="tc-combobox" id="tc-work-combo" role="combobox" aria-expanded="false" aria-haspopup="listbox">
+              <input
+                type="text"
+                id="tc-work-in"
+                class="tc-combobox-in"
+                autocomplete="off"
+                value="{{ selected_work_label }}"
+                placeholder="Введите название или выберите из списка…"
+                aria-autocomplete="list"
+                aria-controls="tc-work-list"
+              />
+              <ul class="tc-combobox-dropdown" id="tc-work-list" role="listbox" hidden></ul>
+            </div>
+          </div>
+          <div class="tc-filter-actions">
+            <button type="submit">Применить фильтры</button>
+            <a class="btn-secondary" href="/dictionaries/tech_cards" style="display:inline-block; text-decoration:none; line-height:1.2;">Сбросить</a>
+          </div>
+        </div>
+      </form>
+    </div>
+
+    {% if error %}
+      {% include "includes/rms_inline_error.html" %}
+    {% elif not items %}
+      <div class="card"><p class="muted" style="margin:0;">Нет данных (или пустой результат по фильтру).</p></div>
+    {% else %}
+      <div class="card data-table-card" id="tc-table-wrap">
+        <div class="table-filter-bar">
+          <label for="tbl-filter-tc">Поиск в загруженной странице</label>
+          <input type="search" id="tbl-filter-tc" placeholder="Текст по колонкам текущей страницы…" autocomplete="off" />
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table" id="tc-table">
+            <thead>
+              <tr>
+                <th class="col-num">№</th>
+                <th>Название работы</th>
+                <th>Бренд</th>
+                <th>Детали</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in items %}
+                <tr
+                  data-brand-uid="{{ row.brand_uid or '' }}"
+                  data-work-uid="{{ row.work_uid or '' }}"
+                >
+                  <td class="col-num">{{ loop.index }}</td>
+                  <td>{{ row.work_name or row.name or "—" }}</td>
+                  <td>{{ row.brand_name or "—" }}</td>
+                  <td>
+                    {% if row.work_uid and row.brand_uid %}
+                      <a
+                        href="{{ url_for('dictionaries.tech_card_detail') }}?work_uid={{ row.work_uid|urlencode }}&amp;brand_uid={{ row.brand_uid|urlencode }}{% if selected_brand_uid %}&amp;ret_brand_uid={{ selected_brand_uid|urlencode }}{% endif %}{% if selected_work_uid %}&amp;ret_work_uid={{ selected_work_uid|urlencode }}{% endif %}{% if request.args.get('cursor') %}&amp;ret_cursor={{ request.args.get('cursor')|urlencode }}{% endif %}"
+                        >Подробнее</a>
+                    {% else %}
+                      <span class="muted">—</span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
+    <div class="card data-pager">
+      {% if page.has_more and page.next_cursor %}
+        <a
+          href="/dictionaries/tech_cards?cursor={{ page.next_cursor|urlencode }}{% if selected_brand_uid %}&amp;brand_uid={{ selected_brand_uid|urlencode }}{% endif %}{% if selected_work_uid %}&amp;work_uid={{ selected_work_uid|urlencode }}{% endif %}"
+        >Следующая страница →</a>
+      {% else %}
+        <span class="muted">Конец списка</span>
+      {% endif %}
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var TC_BRANDS = {{ brand_options|tojson }};
+      var TC_WORKS = {{ work_options|tojson }};
+      var TC_RESOURCE_TYPES = {{ resource_type_options|tojson }};
+
+      function bindCombobox(root, items, hiddenInputId) {
+        var input = root.querySelector(".tc-combobox-in");
+        var list = root.querySelector(".tc-combobox-dropdown");
+        var hidden = document.getElementById(hiddenInputId);
+        if (!input || !list || !hidden) return;
+
+        function renderDropdown() {
+          var q = (input.value || "").trim().toLowerCase();
+          list.innerHTML = "";
+          var n = 0;
+          var max = 100;
+          for (var i = 0; i < items.length && n < max; i++) {
+            var it = items[i];
+            if (q && it.label.toLowerCase().indexOf(q) === -1) continue;
+            var li = document.createElement("li");
+            li.setAttribute("role", "option");
+            li.setAttribute("data-uid", it.uid);
+            li.textContent = it.label;
+            li.addEventListener("mousedown", function (e) {
+              e.preventDefault();
+            });
+            li.addEventListener("click", function () {
+              hidden.value = this.getAttribute("data-uid") || "";
+              input.value = this.textContent || "";
+              list.hidden = true;
+            });
+            list.appendChild(li);
+            n++;
+          }
+          list.hidden = list.children.length === 0;
+        }
+
+        input.addEventListener("input", function () {
+          if (hidden.value) {
+            var match = null;
+            for (var j = 0; j < items.length; j++) {
+              if (items[j].uid === hidden.value) {
+                match = items[j].label;
+                break;
+              }
+            }
+            if (match !== null && input.value !== match) hidden.value = "";
+          }
+          renderDropdown();
+        });
+
+        input.addEventListener("focus", function () {
+          renderDropdown();
+        });
+
+        input.addEventListener("keydown", function (e) {
+          if (e.key === "Escape") list.hidden = true;
+        });
+
+        document.addEventListener("click", function (e) {
+          if (!root.contains(e.target)) list.hidden = true;
+        });
+      }
+
+      function rowText(tr) {
+        var parts = [];
+        tr.querySelectorAll("td").forEach(function (td) {
+          parts.push((td.textContent || "").trim());
+        });
+        return parts.join(" ").toLowerCase();
+      }
+
+      function applyTableTextFilter() {
+        var qEl = document.getElementById("tbl-filter-tc");
+        var q = qEl ? (qEl.value || "").trim().toLowerCase() : "";
+        var tbody = document.querySelector("#tc-table tbody");
+        if (!tbody) return;
+        tbody.querySelectorAll("tr").forEach(function (tr) {
+          tr.style.display = !q || rowText(tr).indexOf(q) !== -1 ? "" : "none";
+        });
+      }
+
+      function labelForUid(items, uid) {
+        for (var i = 0; i < items.length; i++) {
+          if (items[i].uid === uid) return items[i].label;
+        }
+        return null;
+      }
+
+      /**
+       * По введённому тексту выставляет hidden UID (однозначное совпадение) или показывает alert.
+       * @returns {boolean} false — отправку формы отменить
+       */
+      function resolveUidFromInput(items, inputEl, hiddenEl, entityName) {
+        var tin = (inputEl.value || "").trim();
+        /* Пустое поле: не затираем hidden — иначе теряется brand_uid/work_uid из URL или когда
+           подпись не попала в TC_* (бренд вне первых N записей API). Сброс — «Сбросить». */
+        if (!tin) {
+          return true;
+        }
+        var tlow = tin.toLowerCase();
+        if (hiddenEl.value && tin.toLowerCase() === hiddenEl.value.toLowerCase()) {
+          return true;
+        }
+        if (hiddenEl.value) {
+          var lab = labelForUid(items, hiddenEl.value);
+          if (lab !== null && lab.toLowerCase() === tlow) return true;
+        }
+
+        function collect(pred) {
+          var out = [];
+          for (var i = 0; i < items.length; i++) {
+            if (pred(items[i])) out.push(items[i]);
+          }
+          return out;
+        }
+
+        var exact = collect(function (it) {
+          return it.label.toLowerCase() === tlow;
+        });
+        if (exact.length === 1) {
+          hiddenEl.value = exact[0].uid;
+          inputEl.value = exact[0].label;
+          return true;
+        }
+
+        var starts = collect(function (it) {
+          return it.label.toLowerCase().indexOf(tlow) === 0;
+        });
+        if (starts.length === 1) {
+          hiddenEl.value = starts[0].uid;
+          inputEl.value = starts[0].label;
+          return true;
+        }
+
+        var subs = collect(function (it) {
+          return it.label.toLowerCase().indexOf(tlow) !== -1;
+        });
+        if (subs.length === 1) {
+          hiddenEl.value = subs[0].uid;
+          inputEl.value = subs[0].label;
+          return true;
+        }
+
+        if (subs.length > 1) {
+          window.alert(
+            "По «" +
+              tin +
+              "» найдено несколько " +
+              entityName +
+              ". Уточните название или выберите значение из выпадающего списка."
+          );
+          return false;
+        }
+
+        window.alert(
+          "«" +
+            tin +
+            "» не найдено среди " +
+            entityName +
+            " в загруженном справочнике RMS. Выберите из списка или проверьте написание."
+        );
+        return false;
+      }
+
+      function wire() {
+        bindCombobox(document.getElementById("tc-brand-combo"), TC_BRANDS, "h-brand-uid");
+        bindCombobox(document.getElementById("tc-work-combo"), TC_WORKS, "h-work-uid");
+        var tq = document.getElementById("tbl-filter-tc");
+        if (tq) {
+          tq.addEventListener("input", applyTableTextFilter);
+          tq.addEventListener("search", applyTableTextFilter);
+        }
+        applyTableTextFilter();
+
+        var form = document.getElementById("tc-filters");
+        if (form) {
+          form.addEventListener("submit", function (e) {
+            e.preventDefault();
+            var bin = document.getElementById("tc-brand-in");
+            var bhid = document.getElementById("h-brand-uid");
+            var win = document.getElementById("tc-work-in");
+            var whid = document.getElementById("h-work-uid");
+            if (!bin || !bhid || !win || !whid) return;
+            if (!resolveUidFromInput(TC_BRANDS, bin, bhid, "брендов")) return;
+            if (!resolveUidFromInput(TC_WORKS, win, whid, "работ")) return;
+            HTMLFormElement.prototype.submit.call(form);
+          });
+        }
+
+        bindCombobox(document.getElementById("tc-create-work-combo"), TC_WORKS, "h-create-work-uid");
+        bindCombobox(document.getElementById("tc-create-brand-combo"), TC_BRANDS, "h-create-brand-uid");
+        bindCombobox(document.getElementById("tc-create-rt-combo"), TC_RESOURCE_TYPES, "h-create-rt-uid");
+
+        var createForm = document.getElementById("tc-create-form");
+        if (createForm) {
+          createForm.addEventListener("submit", function (e) {
+            e.preventDefault();
+            var win = document.getElementById("tc-create-work-in");
+            var whid = document.getElementById("h-create-work-uid");
+            var bin = document.getElementById("tc-create-brand-in");
+            var bhid = document.getElementById("h-create-brand-uid");
+            var rin = document.getElementById("tc-create-rt-in");
+            var rhid = document.getElementById("h-create-rt-uid");
+            var qty = document.getElementById("tc-create-qty");
+            if (!win || !whid || !bin || !bhid || !rin || !rhid || !qty) return;
+            if (!resolveUidFromInput(TC_WORKS, win, whid, "работ")) return;
+            if (!resolveUidFromInput(TC_BRANDS, bin, bhid, "брендов")) return;
+            if (!resolveUidFromInput(TC_RESOURCE_TYPES, rin, rhid, "типов ресурсов")) return;
+            var qv = (qty.value || "").trim();
+            if (!qv || Number(qv) <= 0) {
+              window.alert("Количество должно быть больше нуля.");
+              return;
+            }
+            HTMLFormElement.prototype.submit.call(createForm);
+          });
+        }
+      }
+
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", wire);
+      } else {
+        wire();
+      }
+    })();
+  </script>
+{% endblock %}

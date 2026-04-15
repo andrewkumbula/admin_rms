@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Справочники</h1>
+  <p class="muted">Только просмотр списков из RMS API (пагинация курсором, где поддерживается).</p>
+
+  <div class="tile-grid">
+    <a class="tile" href="/dictionaries/resource_types">
+      Типы ресурсов
+      <small>Иерархия родитель / дочерний тип для сотрудников, оборудования и др.</small>
+    </a>
+    <a class="tile" href="/dictionaries/tech_cards">
+      Техкарты
+      <small>Работы и привязка к брендам (MDM).</small>
+    </a>
+    <a class="tile" href="/dictionaries/brands">
+      Бренды
+      <small>Справочник брендов из RMS.</small>
+    </a>
+  </div>
+{% endblock %}

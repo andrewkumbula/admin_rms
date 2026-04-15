@@ -1,0 +1,307 @@
+{% extends "base.html" %}
+{% block content %}
+  <p class="toolbar"><a class="back-link" href="/franchisees">← К списку франчайзи</a></p>
+
+  {% if fr_msg %}
+    <div class="alert {% if fr_msg_type == 'error' %}alert-error{% elif fr_msg_type == 'success' %}alert-success{% else %}alert-info{% endif %}">
+      {{ fr_msg }}
+    </div>
+  {% endif %}
+
+  {% if error %}
+    <h1>Франчайзи</h1>
+    {% include "includes/rms_inline_error.html" %}
+  {% elif not franchisee %}
+    <h1>Франчайзи {{ uid }}</h1>
+    <div class="card">Нет данных</div>
+  {% else %}
+    <h1>{{ franchisee.name or "Франчайзи" }}</h1>
+
+    <div class="card">
+      <p><strong>UID:</strong> {{ franchisee.uid or uid }}</p>
+      <p><strong>ИНН (org_id):</strong> {{ franchisee.org_id if franchisee.org_id is not none else "—" }}</p>
+      <p><strong>user_id:</strong> {{ franchisee.user_id or "—" }}</p>
+      <p><strong>Удалён:</strong> {% if franchisee.is_deleted %}да{% else %}нет{% endif %}</p>
+    </div>
+
+    <style>
+      .fr-modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.55);
+        display: none;
+        z-index: 1000;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+      }
+      .fr-modal-backdrop.open {
+        display: flex;
+      }
+      .fr-modal {
+        width: min(1000px, 100%);
+        max-height: 92vh;
+        overflow: hidden;
+        background: var(--bg-card, #fff);
+        border: 1px solid var(--border, #e2e8f0);
+        border-radius: 12px;
+        padding: 14px;
+      }
+      .fr-modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .fr-modal-close {
+        border: 1px solid var(--border, #e2e8f0);
+        border-radius: 8px;
+        padding: 6px 10px;
+        background: transparent;
+        cursor: pointer;
+      }
+      .fr-sc-card-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .fr-modal form {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+      .fr-modal .data-table-wrap {
+        max-height: 52vh;
+        overflow: auto;
+      }
+      .fr-modal .data-table {
+        table-layout: fixed;
+      }
+      .fr-modal .data-table th:nth-child(1),
+      .fr-modal .data-table td:nth-child(1) {
+        width: 48px;
+      }
+      .fr-modal .data-table th:nth-child(2),
+      .fr-modal .data-table td:nth-child(2) {
+        width: 34%;
+      }
+      .fr-modal .data-table th:nth-child(3),
+      .fr-modal .data-table td:nth-child(3) {
+        width: 34%;
+      }
+      .fr-modal .data-table th:nth-child(4),
+      .fr-modal .data-table td:nth-child(4) {
+        width: 32%;
+      }
+      .fr-modal .col-mono {
+        word-break: break-all;
+      }
+    </style>
+
+    <div class="card" data-table-filter-wrap>
+      <div class="fr-sc-card-head">
+        <h2 style="margin-top:0; margin-bottom: 0;">Сервисные центры</h2>
+        {% if can_attach_sc %}
+          <button type="button" class="btn-primary" id="fr-open-attach-sc">Привязать СЦ</button>
+        {% endif %}
+      </div>
+      {% set rows = attached_sc_rows|default([]) %}
+      {% if rows and rows|length > 0 %}
+        <div class="table-filter-bar">
+          <label for="fr-attached-sc-filter">Поиск по таблице</label>
+          <input
+            type="search"
+            id="fr-attached-sc-filter"
+            data-table-filter
+            placeholder="Название, адрес, UID…"
+            style="width: 100%; max-width: 420px"
+            autocomplete="off"
+          />
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Название</th>
+                <th>Адрес / координаты</th>
+                <th class="col-mono">UID</th>
+                <th>Отделы</th>
+                <th>Удалён</th>
+                <th>QC гео</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in rows %}
+                <tr>
+                  <td>
+                    <a href="/service_centers/{{ row.uid }}">{{ row.name }}</a>
+                    {% if row.load_error %}
+                      <br /><span class="muted" style="font-size: 0.75rem">{{ row.load_error }}</span>
+                    {% endif %}
+                  </td>
+                  <td>{{ row.address }}</td>
+                  <td class="col-mono">{{ row.uid }}</td>
+                  <td>{{ row.departments_label }}</td>
+                  <td>{{ row.is_deleted_label }}</td>
+                  <td>{{ row.qc_geo }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="muted">Не закреплено</p>
+      {% endif %}
+    </div>
+
+    {% if can_attach_sc %}
+      <div class="fr-modal-backdrop" id="fr-attach-modal">
+        <div class="fr-modal">
+          <div class="fr-modal-header">
+            <h3 style="margin: 0">Привязать сервисные центры</h3>
+            <button type="button" class="fr-modal-close" id="fr-close-attach-sc">Закрыть</button>
+          </div>
+          <p class="muted" style="margin-top: 8px">
+            Показаны только свободные СЦ (без привязки к франчайзи). Выберите нужные строки и нажмите «Закрепить выбранные».
+          </p>
+          <form method="post" action="/franchisees/{{ uid }}/attach_service_centers" data-table-filter-wrap>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+            <div class="table-filter-bar">
+              <label for="fr-free-sc-filter">Поиск свободных СЦ</label>
+              <input
+                type="search"
+                id="fr-free-sc-filter"
+                data-table-filter
+                placeholder="Название, адрес, UID…"
+                autocomplete="off"
+              />
+            </div>
+            <p style="margin: 0 0 10px 0; display: flex; gap: 8px">
+              <button type="button" class="btn-secondary" id="fr-select-all-free-sc">Выбрать все</button>
+              <button type="button" class="btn-secondary" id="fr-clear-all-free-sc">Снять все</button>
+            </p>
+            <div class="data-table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th style="width: 50px">#</th>
+                    <th>Название</th>
+                    <th>Адрес / координаты</th>
+                    <th class="col-mono">UID</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for o in sc_attach_options %}
+                    <tr>
+                      <td>
+                        <input type="checkbox" name="service_center_ids" value="{{ o.uid }}" />
+                      </td>
+                      <td>{{ o.label }}</td>
+                      <td>{{ o.address_hint or "—" }}</td>
+                      <td class="col-mono">{{ o.uid }}</td>
+                    </tr>
+                  {% else %}
+                    <tr>
+                      <td colspan="4" class="muted">Нет свободных СЦ для привязки.</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            <p style="margin-top: 14px; display: flex; gap: 10px">
+              <button type="submit" class="btn-primary">Закрепить выбранные</button>
+              <button type="button" class="btn-secondary" id="fr-close-attach-sc-bottom">Отмена</button>
+            </p>
+          </form>
+        </div>
+      </div>
+      <script>
+        (function () {
+          var modal = document.getElementById("fr-attach-modal");
+          var openBtn = document.getElementById("fr-open-attach-sc");
+          var closeBtn = document.getElementById("fr-close-attach-sc");
+          var closeBtnBottom = document.getElementById("fr-close-attach-sc-bottom");
+          var selectAllBtn = document.getElementById("fr-select-all-free-sc");
+          var clearAllBtn = document.getElementById("fr-clear-all-free-sc");
+          if (!modal || !openBtn) return;
+          function freeScCheckboxes(onlyVisible) {
+            var rows = modal.querySelectorAll("tbody tr");
+            var out = [];
+            rows.forEach(function (tr) {
+              if (onlyVisible && tr.style.display === "none") return;
+              var cb = tr.querySelector('input[type="checkbox"][name="service_center_ids"]');
+              if (cb) out.push(cb);
+            });
+            return out;
+          }
+          function closeModal() {
+            modal.classList.remove("open");
+          }
+          openBtn.addEventListener("click", function () {
+            modal.classList.add("open");
+          });
+          if (closeBtn) closeBtn.addEventListener("click", closeModal);
+          if (closeBtnBottom) closeBtnBottom.addEventListener("click", closeModal);
+          modal.addEventListener("click", function (e) {
+            if (e.target === modal) closeModal();
+          });
+          document.addEventListener("keydown", function (e) {
+            if (e.key === "Escape") closeModal();
+          });
+          if (selectAllBtn) {
+            selectAllBtn.addEventListener("click", function () {
+              freeScCheckboxes(true).forEach(function (cb) {
+                cb.checked = true;
+              });
+            });
+          }
+          if (clearAllBtn) {
+            clearAllBtn.addEventListener("click", function () {
+              freeScCheckboxes(false).forEach(function (cb) {
+                cb.checked = false;
+              });
+            });
+          }
+        })();
+      </script>
+    {% endif %}
+
+    {% if can_update %}
+      <div class="card">
+        <h2 style="margin-top:0;">Редактирование</h2>
+        <form method="post" action="/franchisees/{{ uid }}/update">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <table class="form-table">
+            <tr>
+              <td><label for="name">Название *</label></td>
+              <td><input id="name" name="name" type="text" required style="width:100%; max-width:400px;" value="{{ franchisee.name or '' }}" /></td>
+            </tr>
+            <tr>
+              <td><label for="org_id">ИНН (org_id)</label></td>
+              <td><input id="org_id" name="org_id" type="text" style="width:100%; max-width:200px;" value="{{ franchisee.org_id if franchisee.org_id is not none else '' }}" placeholder="целое число" /></td>
+            </tr>
+            <tr>
+              <td><label for="user_id">user_id</label></td>
+              <td><input id="user_id" name="user_id" type="text" style="width:100%; max-width:400px;" value="{{ franchisee.user_id or '' }}" /></td>
+            </tr>
+            <tr>
+              <td></td>
+              <td><button type="submit">Сохранить</button></td>
+            </tr>
+          </table>
+        </form>
+      </div>
+    {% endif %}
+
+    {% if can_delete %}
+      <div class="card card-zone-danger">
+        <h2 style="margin-top:0;">Удаление</h2>
+        <form method="post" action="/franchisees/{{ uid }}/delete" onsubmit="return confirm('Удалить франчайзи?');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <button type="submit">Удалить (soft-delete)</button>
+        </form>
+      </div>
+    {% endif %}
+  {% endif %}
+{% endblock %}

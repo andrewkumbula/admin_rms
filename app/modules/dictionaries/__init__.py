@@ -1,0 +1,1 @@
+# Dictionaries (read-only) module

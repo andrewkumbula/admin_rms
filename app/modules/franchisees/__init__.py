@@ -1,0 +1,1 @@
+# Franchisees module package

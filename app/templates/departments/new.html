@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Новый отдел</h1>
+  <p class="toolbar"><a class="back-link" href="/departments">← К списку отделов</a></p>
+
+  {% if form_error %}
+    {% set error = form_error %}
+    {% include "includes/rms_inline_error.html" %}
+  {% endif %}
+
+  <div class="card">
+    <p class="muted" style="margin-top: 0">
+      В RMS поля <code>name</code>, <code>service_center_uid</code>, <code>external_uid</code> обязательны;
+      <code>external_uid</code> должен быть в формате UUID (валидация API).
+    </p>
+    <form id="dept-new-form" method="post" action="/departments/new">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+      <table class="form-table">
+        <tr>
+          <td><label for="dept-name">Название *</label></td>
+          <td>
+            <input id="dept-name" name="name" type="text" required maxlength="255" style="width: 100%; max-width: 420px" value="{{ form_values.name if form_values else '' }}" />
+          </td>
+        </tr>
+        <tr>
+          <td>Сервисный центр *</td>
+          <td>
+            {% set suffix = "dn" %}
+            {% set hidden_name = "service_center_uid" %}
+            {% set field_label = "Сервисный центр" %}
+            {% set options = sc_options %}
+            {% set selected_uid = selected_sc_uid %}
+            {% set selected_label = selected_sc_label %}
+            {% set require_sc = true %}
+            {% set form_id = "dept-new-form" %}
+            {% include "includes/sc_combobox_field.html" %}
+          </td>
+        </tr>
+        <tr>
+          <td><label for="dept-ext">external_uid *</label></td>
+          <td>
+            <input id="dept-ext" name="external_uid" type="text" required maxlength="255" class="col-mono" style="width: 100%; max-width: 420px" placeholder="UUID" value="{{ form_values.external_uid if form_values else '' }}" />
+          </td>
+        </tr>
+        <tr>
+          <td></td>
+          <td><button type="submit">Создать</button></td>
+        </tr>
+      </table>
+    </form>
+  </div>
+{% endblock %}

@@ -1,0 +1,657 @@
+{% extends "base.html" %}
+{% block content %}
+  <p class="toolbar"><a class="back-link" href="/service_centers">← К списку сервисных центров</a></p>
+  <h1>Сервисный центр {{ service_center.name or uid }}</h1>
+
+  {% if errors %}
+    {% set joined_errors = errors | join(" ") %}
+    <div class="alert alert-error">
+      <strong>Ошибки загрузки</strong>
+      <ul>
+        {% for err in errors %}
+          <li>{{ err }}</li>
+        {% endfor %}
+      </ul>
+      {% if rms_error_suggests_token_refresh(joined_errors) %}
+        <form
+          method="post"
+          action="{{ url_for('auth.update_session_token') }}"
+          style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(220, 38, 38, 0.22)"
+        >
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <input type="hidden" name="next" value="{{ request.full_path }}" />
+          <label for="rms-inline-access-token-sc" style="display: block; font-size: 0.875rem; color: var(--text-muted); margin-bottom: 6px"
+            >Новый access token</label
+          >
+          <textarea
+            id="rms-inline-access-token-sc"
+            name="access_token"
+            rows="3"
+            style="width: 100%; max-width: 560px; font-family: ui-monospace, monospace; font-size: 0.8rem; padding: 8px; border-radius: 8px; border: 1px solid var(--border)"
+            placeholder="Вставьте JWT (префикс Bearer необязателен)…"
+            autocomplete="off"
+          ></textarea>
+          <p style="margin: 10px 0 0 0">
+            <button type="submit">Сохранить токен и обновить эту страницу</button>
+          </p>
+        </form>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  {% if sc_msg %}
+    <div class="alert {% if sc_msg_type == 'error' %}alert-error{% elif sc_msg_type == 'success' %}alert-success{% else %}alert-info{% endif %}">
+      {{ sc_msg }}
+    </div>
+  {% endif %}
+
+  <div class="card">
+    <nav class="tab-bar" aria-label="Разделы карточки СЦ">
+      <a class="{% if tab == 'overview' %}active{% endif %}" href="/service_centers/{{ uid }}?tab=overview">Обзор</a>
+      <a class="{% if tab == 'schedule' %}active{% endif %}" href="/service_centers/{{ uid }}?tab=schedule">Расписание</a>
+      {% if can_read_department %}
+        <a class="{% if tab == 'departments' %}active{% endif %}" href="/service_centers/{{ uid }}?tab=departments">Отделы</a>
+      {% endif %}
+      {% if can_read_working_zone %}
+        <a class="{% if tab == 'working_zones' %}active{% endif %}" href="/service_centers/{{ uid }}?tab=working_zones">Рабочие зоны</a>
+      {% endif %}
+      {% if can_read_warehouse %}
+        <a class="{% if tab == 'warehouses' %}active{% endif %}" href="/service_centers/{{ uid }}?tab=warehouses">Склады</a>
+      {% endif %}
+      <a class="{% if tab == 'employees' %}active{% endif %}" href="/service_centers/{{ uid }}?tab=employees">Сотрудники</a>
+      <a class="{% if tab == 'equipment' %}active{% endif %}" href="/service_centers/{{ uid }}?tab=equipment">Оборудование</a>
+      <a class="{% if tab == 'day_offs' %}active{% endif %}" href="/service_centers/{{ uid }}?tab=day_offs">Выходные</a>
+      <a class="{% if tab == 'slots' %}active{% endif %}" href="/service_centers/{{ uid }}?tab=slots">Слоты</a>
+    </nav>
+  </div>
+
+  {% if tab == "overview" %}
+    <div class="card">
+      <h3>Основная информация</h3>
+      <p><strong>UID:</strong> {{ service_center.uid or uid }}</p>
+      <p><strong>Название:</strong> {{ service_center.name or "-" }}</p>
+      <p>
+        <strong>Franchisee UID:</strong>
+        {% if service_center.franchisee_uid %}
+          <a class="col-mono" href="/franchisees/{{ service_center.franchisee_uid }}">{{ service_center.franchisee_uid }}</a>
+        {% else %}
+          —
+        {% endif %}
+      </p>
+      <p><strong>Удален:</strong> {{ "Да" if service_center.is_deleted else "Нет" }}</p>
+    </div>
+
+    <div class="card">
+      <h3>Провайдеры (склады)</h3>
+      <p class="muted" style="margin-top: 0">
+        Данные из <code>GET /api/v1/warehouse/provider_map</code> для текущего СЦ.
+      </p>
+      {% if not provider_rows %}
+        <p class="muted">Для этого сервисного центра данные по провайдерам не найдены.</p>
+      {% else %}
+        <div data-table-filter-wrap>
+          <div class="table-filter-bar">
+            <label for="tbl-filter-sc-providers">Поиск в таблице</label>
+            <input type="search" id="tbl-filter-sc-providers" data-table-filter placeholder="Адрес, коды провайдеров…" autocomplete="off" />
+          </div>
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="col-num">№</th>
+                  <th>Адрес</th>
+                  {% for code in provider_codes %}
+                    <th>{{ code }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in provider_rows %}
+                  {% set pmap = row.providers_map or {} %}
+                  <tr>
+                    <td class="col-num">{{ loop.index }}</td>
+                    <td>{{ row.address or "—" }}</td>
+                    {% for code in provider_codes %}
+                      <td class="col-mono">{{ pmap.get(code) or "—" }}</td>
+                    {% endfor %}
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+
+    {% if can_mutate_franchise|default(false) %}
+      <div class="card">
+        <h3>Привязка к франчайзи</h3>
+        <p class="muted" style="margin-top: 0">
+          RMS: <code>POST /api/v1/service_center/{{ uid }}/franchise</code> (тело <code>{"franchisee_uid":"…"}</code>),
+          отвязка — <code>DELETE /api/v1/service_center/{{ uid }}/franchise</code>.
+        </p>
+        {% if service_center.franchisee_uid %}
+          <form method="post" action="/service_centers/{{ uid }}/franchise/detach" onsubmit="return confirm('Отвязать этот сервисный центр от франчайзи?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+            <button type="submit" class="btn-secondary">Отвязать от франчайзи</button>
+          </form>
+        {% endif %}
+        <form method="post" action="/service_centers/{{ uid }}/franchise/attach" style="margin-top: 14px">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <p style="margin: 0 0 8px 0">
+            <label for="sc-franchisee">Привязать к франчайзи</label>
+          </p>
+          {% if franchisee_options and franchisee_options|length > 0 %}
+            <select id="sc-franchisee" name="franchisee_uid" required style="width: 100%; max-width: 420px">
+              <option value="" disabled {% if not service_center.franchisee_uid %}selected{% endif %}>— выберите франчайзи —</option>
+              {% for f in franchisee_options %}
+                <option value="{{ f.uid }}" {% if service_center.franchisee_uid and f.uid == service_center.franchisee_uid %}selected{% endif %}>{{ f.label }}</option>
+              {% endfor %}
+            </select>
+          {% else %}
+            <input
+              id="sc-franchisee"
+              type="text"
+              name="franchisee_uid"
+              required
+              placeholder="UUID франчайзи (нужно право franchisee.read для списка)"
+              style="width: 100%; max-width: 420px; font-family: ui-monospace, monospace"
+              autocomplete="off"
+            />
+          {% endif %}
+          <p style="margin-top: 12px">
+            <button type="submit" class="btn-primary">Привязать / сменить франчайзи</button>
+          </p>
+        </form>
+      </div>
+    {% endif %}
+
+    {% if can_mutate_sc %}
+      <div class="card">
+        <h3>Обновить СЦ (RMS v2)</h3>
+        <p class="muted">
+          <code>POST /api/v2/service_center/{{ uid }}</code> — multipart: поле <code>name</code>, опционально файл <code>image</code> (jpeg, webp, heic, до 25 МБ).
+        </p>
+        <form method="post" action="/service_centers/{{ uid }}/update" enctype="multipart/form-data">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <p>
+            <label for="sc_name">Новое название</label><br />
+            <input id="sc_name" type="text" name="name" style="width:100%; max-width:400px;" value="{{ service_center.name or '' }}" />
+          </p>
+          <p>
+            <label for="sc_image">Изображение (опционально)</label><br />
+            <input id="sc_image" type="file" name="image" accept="image/jpeg,image/webp,image/heic,.heic" />
+          </p>
+          <button type="submit">Сохранить</button>
+        </form>
+      </div>
+    {% endif %}
+  {% endif %}
+
+  {% if tab == "schedule" %}
+    <div class="card">
+      <h3>Расписание (неделя)</h3>
+      <p class="muted">Данные из карточки СЦ. Удаление по UUID — если известен идентификатор строки расписания в RMS.</p>
+      {% if not schedule_items %}
+        <p class="muted">Нет строк расписания (или только глобальное расписание без локальных записей).</p>
+      {% else %}
+        <div data-table-filter-wrap>
+        <div class="table-filter-bar">
+          <label for="tbl-filter-sc-sch">Поиск в таблице</label>
+          <input type="search" id="tbl-filter-sc-sch" data-table-filter placeholder="Текст по строкам расписания…" autocomplete="off" />
+        </div>
+        <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th class="col-num">№</th>
+              <th>День (1–Пн … 7–Вс)</th>
+              <th>Начало</th>
+              <th>Конец</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in schedule_items %}
+              <tr>
+                <td class="col-num">{{ loop.index }}</td>
+                <td>{{ row.week_day or "-" }}</td>
+                <td>{{ row.start_time or "-" }}</td>
+                <td>{{ row.end_time or "-" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+        </div>
+      {% endif %}
+    </div>
+
+    {% if can_mutate_sc %}
+      <div class="card">
+        <h4>Добавить локальное расписание (один день)</h4>
+        <form method="post" action="/service_centers/{{ uid }}/schedule/create">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <label>День недели
+            <select name="week_day" required>
+              {% for d in range(1, 8) %}
+                <option value="{{ d }}">{{ d }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label style="margin-left: 12px;">Начало <input type="time" name="start_time" required /></label>
+          <label style="margin-left: 12px;">Конец <input type="time" name="end_time" required /></label>
+          <button type="submit" style="margin-left: 12px;">Создать</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h4>Изменить локальное расписание (день уже должен существовать)</h4>
+        <form method="post" action="/service_centers/{{ uid }}/schedule/update">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <label>День недели
+            <select name="week_day" required>
+              {% for d in range(1, 8) %}
+                <option value="{{ d }}">{{ d }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label style="margin-left: 12px;">Начало <input type="time" name="start_time" required /></label>
+          <label style="margin-left: 12px;">Конец <input type="time" name="end_time" required /></label>
+          <button type="submit" style="margin-left: 12px;">Обновить</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h4>Удалить расписание по UUID</h4>
+        <form method="post" action="/service_centers/{{ uid }}/schedule/delete" onsubmit="return confirm('Удалить расписание?');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <input type="text" name="sch_uid" placeholder="uuid расписания" style="width: 320px; max-width: 100%;" required />
+          <button type="submit" style="margin-left: 8px;">Удалить</button>
+        </form>
+      </div>
+    {% endif %}
+  {% endif %}
+
+  {% if tab == "departments" %}
+    {% if can_create_department %}
+      <div class="card">
+        <h4>Создать отдел для этого СЦ</h4>
+        <form method="post" action="/service_centers/{{ uid }}/departments/create">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <label>Название <input type="text" name="name" required style="width: 320px; max-width: 100%" /></label>
+          <label style="margin-left: 12px">external_uid <input type="text" name="external_uid" required style="width: 320px; max-width: 100%" /></label>
+          <button type="submit" style="margin-left: 12px">Создать</button>
+        </form>
+      </div>
+    {% endif %}
+    <div class="card">
+      <h3>Отделы сервисного центра</h3>
+      {% if not department_items %}
+        <p class="muted">Для этого СЦ отделы не найдены.</p>
+      {% else %}
+        <div data-table-filter-wrap>
+          <div class="table-filter-bar">
+            <label for="tbl-filter-sc-dept">Поиск в таблице</label>
+            <input type="search" id="tbl-filter-sc-dept" data-table-filter placeholder="Текст по отделам…" autocomplete="off" />
+          </div>
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="col-num">№</th>
+                  <th>Название отдела</th>
+                  <th>external_uid</th>
+                  <th class="col-mono">UID отдела</th>
+                  {% if can_update_department or can_delete_department %}<th></th>{% endif %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for d in department_items %}
+                  <tr>
+                    <td class="col-num">{{ loop.index }}</td>
+                    <td>{{ d.name or "—" }}</td>
+                    <td class="col-mono">{{ d.external_uid or "—" }}</td>
+                    <td class="col-mono" style="font-size: 0.8rem">{{ d.uid or "—" }}</td>
+                    {% if can_update_department or can_delete_department %}
+                      <td style="white-space: nowrap">
+                        {% if can_update_department and d.uid %}
+                          <form method="post" action="/service_centers/{{ uid }}/departments/{{ d.uid }}/patch" style="display:inline-flex; gap:6px; align-items:center; flex-wrap:wrap">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                            <input type="text" name="name" placeholder="новое имя" style="width: 150px" />
+                            <input type="text" name="external_uid" placeholder="new external_uid" style="width: 180px" />
+                            <button type="submit">Сохранить</button>
+                          </form>
+                        {% endif %}
+                        {% if can_delete_department and d.uid %}
+                          <form method="post" action="/service_centers/{{ uid }}/departments/{{ d.uid }}/delete" style="display:inline; margin-left:8px" onsubmit="return confirm('Удалить отдел {{ (d.name or d.uid)|e }}?');">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                            <button type="submit" class="btn-secondary">Удалить</button>
+                          </form>
+                        {% endif %}
+                      </td>
+                    {% endif %}
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  {% if tab == "working_zones" %}
+    <div class="card">
+      <h3>Рабочие зоны сервисного центра</h3>
+      {% if not working_zone_items %}
+        <p class="muted">Для этого СЦ рабочие зоны не найдены.</p>
+      {% else %}
+        <div data-table-filter-wrap>
+          <div class="table-filter-bar">
+            <label for="tbl-filter-sc-wz">Поиск в таблице</label>
+            <input type="search" id="tbl-filter-sc-wz" data-table-filter placeholder="Текст по рабочим зонам…" autocomplete="off" />
+          </div>
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="col-num">№</th>
+                  <th>Тип ресурса</th>
+                  <th>Доступна</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in working_zone_items %}
+                  <tr>
+                    <td class="col-num">{{ loop.index }}</td>
+                    <td>{{ row.resource_type_label or row.resource_type or "—" }}</td>
+                    <td>
+                      {% if row.is_available == true or row.is_available == 1 %}
+                        <span class="badge-del no">Да</span>
+                      {% elif row.is_available == false or row.is_available == 0 %}
+                        <span class="badge-del yes">Нет</span>
+                      {% else %}
+                        {{ row.is_available if row.is_available is not none else "—" }}
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+    <div class="card data-pager">
+      {% if working_zones_page.has_more and working_zones_page.next_cursor %}
+        <a href="/service_centers/{{ uid }}?tab=working_zones&wz_cursor={{ working_zones_page.next_cursor|urlencode }}">Следующая страница →</a>
+      {% else %}
+        <span class="muted">Конец списка</span>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  {% if tab == "employees" %}
+    <div class="card">
+      <h3>Сотрудники</h3>
+      {% if not employee_items %}
+        <p class="muted">Нет данных</p>
+      {% else %}
+        <div data-table-filter-wrap>
+        <div class="table-filter-bar">
+          <label for="tbl-filter-sc-emp">Поиск в таблице</label>
+          <input type="search" id="tbl-filter-sc-emp" data-table-filter placeholder="Текст по сотрудникам…" autocomplete="off" />
+        </div>
+        <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th class="col-num">№</th>
+              <th>SSO ID</th>
+              <th>Имя</th>
+              <th>Тип ресурса</th>
+              <th>Доступен</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in employee_items %}
+              <tr>
+                <td class="col-num">{{ loop.index }}</td>
+                <td class="col-mono">{{ item.sso_id or item.uid or "-" }}</td>
+                <td>{{ item.name or item.full_name or "-" }}</td>
+                <td>{{ item.resource_type_label or item.resource_type or "-" }}</td>
+                <td>{{ item.is_available if item.is_available is not none else "-" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+        </div>
+      {% endif %}
+    </div>
+    {% if can_mutate_sc %}
+      <div class="card">
+        <h4>Добавить сотрудника</h4>
+        <p class="muted">API: <code>POST /api/v2/service_center/{uid}/employee</code>. Тип ресурса — дочерний с родителем «Сотрудник».</p>
+        <form method="post" action="/service_centers/{{ uid }}/employee/create">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <label>SSO ID <input type="text" name="sso_id" required style="width: 280px; max-width: 100%;" /></label>
+          <label style="margin-left: 12px;">Resource type UID <input type="text" name="resource_type_uid" required style="width: 280px; max-width: 100%;" /></label>
+          <label style="margin-left: 12px;">Контракт до <input type="date" name="contract_due_date" /></label>
+          <button type="submit" style="margin-left: 12px;">Создать</button>
+        </form>
+      </div>
+    {% endif %}
+  {% endif %}
+
+  {% if tab == "equipment" %}
+    <div class="card">
+      <h3>Оборудование</h3>
+      {% if not equipment_items %}
+        <p class="muted">Нет данных</p>
+      {% else %}
+        <div data-table-filter-wrap>
+        <div class="table-filter-bar">
+          <label for="tbl-filter-sc-eq">Поиск в таблице</label>
+          <input type="search" id="tbl-filter-sc-eq" data-table-filter placeholder="Текст по оборудованию…" autocomplete="off" />
+        </div>
+        <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th class="col-num">№</th>
+              <th>Название</th>
+              <th>Тип ресурса</th>
+              <th>Доступно</th>
+              {% if can_mutate_sc %}<th>Изменить</th>{% endif %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in equipment_items %}
+              <tr>
+                <td class="col-num">{{ loop.index }}</td>
+                <td>{{ item.name or "-" }}</td>
+                <td>{{ item.resource_type_label or item.resource_type or "-" }}</td>
+                <td>{{ item.is_available if item.is_available is not none else "-" }}</td>
+                {% if can_mutate_sc and item.uid %}
+                  <td>
+                    <form method="post" action="/service_centers/{{ uid }}/equipment/{{ item.uid }}/patch" style="display:flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                      <input type="text" name="name" placeholder="новое имя" style="width: 120px;" />
+                      <select name="is_available">
+                        <option value="">доступность —</option>
+                        <option value="1">да</option>
+                        <option value="0">нет</option>
+                      </select>
+                      <button type="submit">Сохранить</button>
+                    </form>
+                  </td>
+                {% elif can_mutate_sc %}
+                  <td></td>
+                {% endif %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+        </div>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  {% if tab == "warehouses" %}
+    <div class="card">
+      <h3>Склады сервисного центра</h3>
+      {% if not warehouse_items %}
+        <p class="muted">Для этого сервисного центра склады не найдены.</p>
+      {% else %}
+        <div data-table-filter-wrap>
+          <div class="table-filter-bar">
+            <label for="tbl-filter-sc-wh">Поиск в таблице</label>
+            <input type="search" id="tbl-filter-sc-wh" data-table-filter placeholder="Название, приёмка, провайдеры…" autocomplete="off" />
+          </div>
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="col-num">№</th>
+                  <th>Название</th>
+                  <th>Приёмка</th>
+                  <th>Провайдеры</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in warehouse_items %}
+                  <tr>
+                    <td class="col-num">{{ loop.index }}</td>
+                    <td>
+                      {% if item.uid %}
+                        <a href="/warehouses/{{ item.uid }}">{{ item.name or "—" }}</a>
+                      {% else %}
+                        {{ item.name or "—" }}
+                      {% endif %}
+                    </td>
+                    <td>{{ item.acceptance_time if item.acceptance_time is defined else "—" }}</td>
+                    <td class="col-addr">
+                      {% if item.providers %}
+                        {% for p in item.providers %}
+                          <span class="muted">{{ p.provider }}: {{ p.ids }}</span>{% if not loop.last %}<br />{% endif %}
+                        {% endfor %}
+                      {% else %}
+                        —
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  {% if tab == "day_offs" %}
+    <div class="card">
+      <h3>Выходные дни</h3>
+      {% if not day_off_items %}
+        <p class="muted">Нет данных</p>
+      {% else %}
+        <div data-table-filter-wrap>
+        <div class="table-filter-bar">
+          <label for="tbl-filter-sc-do">Поиск в таблице</label>
+          <input type="search" id="tbl-filter-sc-do" data-table-filter placeholder="Текст по выходным…" autocomplete="off" />
+        </div>
+        <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th class="col-num">№</th>
+              <th>Тип</th>
+              <th>Начало</th>
+              <th>Конец</th>
+              {% if can_mutate_sc %}<th></th>{% endif %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in day_off_items %}
+              <tr>
+                <td class="col-num">{{ loop.index }}</td>
+                <td>{{ row.off_type or "-" }}</td>
+                <td>{{ row.start_datetime or "-" }}</td>
+                <td>{{ row.end_datetime or "-" }}</td>
+                {% if can_mutate_sc and row.uid %}
+                  <td>
+                    <form method="post" action="/service_centers/{{ uid }}/day_off/{{ row.uid }}/delete" style="display:inline;" onsubmit="return confirm('Удалить выходной?');">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                      <button type="submit">Удалить</button>
+                    </form>
+                  </td>
+                {% elif can_mutate_sc %}
+                  <td></td>
+                {% endif %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+        </div>
+      {% endif %}
+    </div>
+
+    {% if can_mutate_sc %}
+      <div class="card">
+        <h4>Добавить выходной период</h4>
+        <p class="muted">Формат даты для API: <code>YYYY-MM-DD HH:MM</code> (поля ниже — локальное время браузера).</p>
+        <form method="post" action="/service_centers/{{ uid }}/day_off/create">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <label>Начало <input type="datetime-local" name="start_datetime" required step="60" /></label>
+          <label style="margin-left: 12px;">Конец <input type="datetime-local" name="end_datetime" required step="60" /></label>
+          <label style="margin-left: 12px;">Тип (опц.) <input type="text" name="off_type" placeholder="тип" /></label>
+          <button type="submit" style="margin-left: 12px;">Создать</button>
+        </form>
+      </div>
+    {% endif %}
+  {% endif %}
+
+  {% if tab == "slots" %}
+    <div class="card">
+      <h3>Слоты (RMS v2)</h3>
+      <p class="muted">
+        <code>GET /api/v2/service_center/{uid}/slots</code> требует query:
+        <code>start_date</code> (YYYY-MM-DD), <code>car</code> (int, MDM), <code>jobs</code> (несколько id работ в query).
+      </p>
+
+      <form method="get" action="/service_centers/{{ uid }}" style="margin-bottom:16px;">
+        <input type="hidden" name="tab" value="slots" />
+        <p>
+          <label>start_date<br />
+            <input type="date" name="slots_start_date" value="{{ slots_q_start }}" required />
+          </label>
+        </p>
+        <p>
+          <label>car (MDM)<br />
+            <input type="number" name="slots_car" value="{{ slots_q_car }}" style="width:160px;" placeholder="id модификации" />
+          </label>
+        </p>
+        <p>
+          <label>jobs (id через запятую)<br />
+            <input type="text" name="slots_jobs" value="{{ slots_q_jobs }}" style="width:100%; max-width:480px;" placeholder="например 101,102" />
+          </label>
+        </p>
+        <button type="submit">Загрузить слоты</button>
+      </form>
+
+      {% if slots_tab_error %}
+        {% set error = slots_tab_error %}
+        {% include "includes/rms_inline_error.html" %}
+      {% elif slots_need_params %}
+        <p class="muted">Укажите car и jobs, затем нажмите «Загрузить слоты».</p>
+      {% elif not slot_items %}
+        <p class="muted">Свободных слотов нет (RMS вернул пустой список или 404).</p>
+      {% else %}
+        <pre>{{ slot_items | tojson(indent=2) }}</pre>
+      {% endif %}
+    </div>
+  {% endif %}
+{% endblock %}

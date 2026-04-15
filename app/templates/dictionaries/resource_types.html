@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="data-page">
+    <p class="toolbar"><a class="back-link" href="/dictionaries">← Справочники</a></p>
+    <h1>Типы ресурсов</h1>
+
+    {% if rt_msg %}
+      <div class="alert {% if rt_msg_type == 'error' %}alert-error{% elif rt_msg_type == 'success' %}alert-success{% else %}alert-info{% endif %}">
+        {{ rt_msg }}
+      </div>
+    {% endif %}
+
+    {% if can_create %}
+      <div class="card">
+        <h3 style="margin-top:0;">Создать тип ресурса</h3>
+        <p class="muted">
+          <code>POST /api/v1/resource_type</code> — родитель из фиксированного перечня RMS, дочерний тип — произвольная строка (до 255 символов).
+        </p>
+        <form method="post" action="/dictionaries/resource_types/create">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <table class="form-table">
+            <tr>
+              <td><label for="prt_parent">Родительский тип *</label></td>
+              <td>
+                <select id="prt_parent" name="parent_resource_type" required style="min-width:280px;">
+                  <option value="">— выберите —</option>
+                  {% for p in parent_resource_types %}
+                    <option value="{{ p }}">{{ p }}</option>
+                  {% endfor %}
+                </select>
+              </td>
+            </tr>
+            <tr>
+              <td><label for="prt_child">Дочерний тип *</label></td>
+              <td>
+                <input id="prt_child" name="children_resource_type" type="text" required maxlength="255" style="width:100%; max-width:480px;" placeholder="Например: Подъёмник" autocomplete="off" />
+              </td>
+            </tr>
+            <tr>
+              <td><label for="prt_sid">ID во внешней системе</label></td>
+              <td>
+                <input id="prt_sid" name="system_id" type="number" step="1" style="width:160px;" placeholder="опционально" />
+                <span class="muted" style="display:block; margin-top:6px;">Поле <code>id</code> в JSON к RMS — только если нужно.</span>
+              </td>
+            </tr>
+            <tr>
+              <td></td>
+              <td><button type="submit">Создать</button></td>
+            </tr>
+          </table>
+        </form>
+      </div>
+    {% endif %}
+
+    {% if error %}
+      {% include "includes/rms_inline_error.html" %}
+    {% elif not items %}
+      <div class="card"><p class="muted" style="margin:0;">Нет данных в ответе RMS.</p></div>
+    {% else %}
+      <div class="card data-table-card" data-table-filter-wrap>
+        <div class="table-filter-bar">
+          <label for="tbl-filter-rt">Поиск в таблице</label>
+          <input type="search" id="tbl-filter-rt" data-table-filter placeholder="Текст по всем колонкам…" autocomplete="off" />
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th class="col-num">№</th>
+                <th>Родитель</th>
+                <th>Дочерний</th>
+                <th>Удалён</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in items %}
+                <tr>
+                  <td class="col-num">{{ loop.index }}</td>
+                  <td>{{ row.parent_resource_type or "—" }}</td>
+                  <td>{{ row.children_resource_type or "—" }}</td>
+                  <td>
+                    {% if row.is_deleted %}
+                      <span class="badge-del yes">Да</span>
+                    {% else %}
+                      <span class="badge-del no">Нет</span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
+    <div class="card data-pager">
+      {% if page.has_more and page.next_cursor %}
+        <a href="/dictionaries/resource_types?cursor={{ page.next_cursor|urlencode }}">Следующая страница →</a>
+      {% else %}
+        <span class="muted">Конец списка</span>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

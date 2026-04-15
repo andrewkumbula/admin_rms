@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="data-page">
+    <h1>Записи</h1>
+
+    <div class="card">
+      <form id="appt-list-form" method="get" action="/appointments" class="data-filters">
+        <div style="min-width: 260px">
+          {% set suffix = "ap" %}
+          {% set hidden_name = "sc_uid" %}
+          {% set field_label = "Сервисный центр (фильтр, необязательно)" %}
+          {% set options = sc_options %}
+          {% set selected_uid = filters.sc_uid %}
+          {% set selected_label = selected_sc_label %}
+          {% set require_sc = false %}
+          {% set form_id = "appt-list-form" %}
+          {% include "includes/sc_combobox_field.html" %}
+        </div>
+        <label>
+          Дата от
+          <input type="date" name="date_from" value="{{ filters.date_from }}" />
+        </label>
+        <label>
+          Дата до
+          <input type="date" name="date_to" value="{{ filters.date_to }}" />
+        </label>
+        <label>
+          Статус
+          <select name="status">
+            {% for option in status_options %}
+              <option value="{{ option }}" {% if filters.status == option %}selected{% endif %}>
+                {{ option if option else "Любой" }}
+              </option>
+            {% endfor %}
+          </select>
+        </label>
+        <button type="submit">Применить</button>
+      </form>
+    </div>
+
+    {% if error %}
+      {% set rms_error_prefix = "Не удалось загрузить данные: " %}
+      {% include "includes/rms_inline_error.html" %}
+    {% elif not items %}
+      <div class="card">Нет данных</div>
+    {% else %}
+      <div class="card data-table-card" data-table-filter-wrap>
+        <div class="table-filter-bar">
+          <label for="tbl-filter-ap">Поиск в таблице</label>
+          <input
+            type="search"
+            id="tbl-filter-ap"
+            data-table-filter
+            placeholder="Текст по всем колонкам загруженной страницы…"
+            autocomplete="off"
+          />
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th class="col-num">№</th>
+                <th>Дата / время</th>
+                <th>СЦ</th>
+                <th>Статус</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in items %}
+                {% set sc = item.service_center_uid or item.sc_uid %}
+                {% set dt = item.datetime or item.start_at or item.slot_start %}
+                <tr>
+                  <td class="col-num">{{ loop.index }}</td>
+                  <td class="col-name">
+                    {% if item.uid %}
+                      <a href="/appointments/{{ item.uid }}">{{ dt or "Открыть" }}</a>
+                    {% else %}
+                      {{ dt or "—" }}
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if sc %}
+                      <a href="/service_centers/{{ sc }}" title="{{ sc }}">СЦ</a>
+                    {% else %}
+                      —
+                    {% endif %}
+                  </td>
+                  <td>{{ item.status or "—" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="card data-pager">
+      {% if page.has_more and page.next_cursor %}
+        <a
+          href="/appointments?sc_uid={{ filters.sc_uid|urlencode }}&date_from={{ filters.date_from|urlencode }}&date_to={{ filters.date_to|urlencode }}&status={{ filters.status|urlencode }}&cursor={{ page.next_cursor|urlencode }}"
+        >Следующая страница →</a>
+      {% else %}
+        <span class="muted">Конец списка</span>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

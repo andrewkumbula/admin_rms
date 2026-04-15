@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="data-page">
+    <p class="toolbar">
+      <a class="back-link" href="{{ back_url }}">← К списку техкарт</a>
+      <span class="muted" style="margin-left: 12px;">|</span>
+      <a class="back-link" href="/dictionaries">Справочники</a>
+    </p>
+    <h1>Техкарта: детали</h1>
+
+    {% if error %}
+      {% include "includes/rms_inline_error.html" %}
+    {% elif detail %}
+      <div class="card" style="margin-bottom: 16px;">
+        <p style="margin: 0 0 8px 0;"><strong>Работа:</strong> {{ detail.work_name or "—" }}</p>
+        <p style="margin: 0;"><strong>Бренд:</strong> {{ detail.brand_name or "—" }}</p>
+      </div>
+      <div class="card data-table-card">
+        <h3 style="margin-top: 0;">Ресурсы</h3>
+        {% if not detail.resources %}
+          <p class="muted" style="margin: 0;">Нет строк ресурсов в ответе RMS.</p>
+        {% else %}
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Родительский тип ресурса</th>
+                  <th>Дочерний тип ресурса</th>
+                  <th class="col-num">Кол-во</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for r in detail.resources %}
+                  <tr>
+                    <td>{{ r.parent_resource_type or "—" }}</td>
+                    <td>{{ r.children_resource_type or "—" }}</td>
+                    <td class="col-num">{{ r.quantity if r.quantity is not none else "—" }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+{% endblock %}

@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="data-page">
+  <h1>Межскладские маршруты и карты</h1>
+  <p class="toolbar"><a class="back-link" href="/warehouses">← Список складов</a></p>
+
+  {% if wh_msg %}
+    <div class="alert {% if wh_msg_type == 'error' %}alert-error{% elif wh_msg_type == 'success' %}alert-success{% else %}alert-info{% endif %}">
+      {{ wh_msg }}
+    </div>
+  {% endif %}
+
+  <div class="card">
+    <h2 style="margin-top:0;">Фильтры</h2>
+    <form id="wh-dr-form" method="get" action="/warehouses/delivery_routes" class="data-filters">
+      <label>
+        onec_id → <code>1с_id</code>
+        <input id="onec_id" name="onec_id" type="text" value="{{ onec_id }}" placeholder="внешний system_id" autocomplete="off" />
+      </label>
+      <div style="min-width: 260px">
+        {% set suffix = "whd" %}
+        {% set hidden_name = "rms_uid" %}
+        {% set field_label = "Сервисный центр (rms_uid, фильтр provider_map)" %}
+        {% set options = sc_options %}
+        {% set selected_uid = rms_uid %}
+        {% set selected_label = selected_sc_label|default('') %}
+        {% set require_sc = false %}
+        {% set form_id = "wh-dr-form" %}
+        {% include "includes/sc_combobox_field.html" %}
+      </div>
+      <label>
+        limit (10–100)
+        <input id="limit" name="limit" type="text" value="{{ limit }}" style="min-width:80px;" />
+      </label>
+      <button type="submit">Показать</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0;">Карта доставки (<code>GET /api/v1/warehouse/delivery_map</code>)</h2>
+    {% if dm_err %}
+      {% set error = dm_err %}
+      {% set rms_error_suffix = "-dm" %}
+      {% include "includes/rms_inline_error.html" %}
+    {% elif not dm_rows %}
+      <p class="muted">Нет данных (или 404 от RMS)</p>
+    {% else %}
+      {% for row in dm_rows %}
+        <div style="margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid #e5e7eb;">
+          <p><strong>to_warehouse_id (1С):</strong> {{ row.to_warehouse_id or "—" }}</p>
+          <p><strong>address:</strong> {{ row.address or "—" }}</p>
+          {% if row.source_warehouses %}
+            <div data-table-filter-wrap style="margin-top:8px;">
+            <div class="table-filter-bar">
+              <label for="tbl-filter-dm-{{ loop.index }}">Поиск в таблице источников</label>
+              <input type="search" id="tbl-filter-dm-{{ loop.index }}" data-table-filter placeholder="Текст по строкам…" autocomplete="off" />
+            </div>
+            <div class="data-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="col-num">№</th>
+                  <th>from (1С)</th>
+                  <th>Адрес источника</th>
+                  <th>delivery_days*</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for s in row.source_warehouses %}
+                  <tr>
+                    <td class="col-num">{{ loop.index }}</td>
+                    <td class="col-mono">{{ s.from_source_warehouse_id or "—" }}</td>
+                    <td class="col-addr">{{ s.source_warehouse_address or "—" }}</td>
+                    <td>{{ s.delivery_days }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+            </div>
+            </div>
+          {% else %}
+            <p class="muted">Нет источников</p>
+          {% endif %}
+        </div>
+      {% endfor %}
+      <p class="muted">* Расчёт сроков в RMS (в т.ч. acceptance_time, порог 14:00 МСК, −1 для «тот же СЦ»).</p>
+      {% if dm_meta.has_more and dm_meta.cursor %}
+        <form method="get" action="/warehouses/delivery_routes" style="display:inline;">
+          <input type="hidden" name="onec_id" value="{{ onec_id }}" />
+          <input type="hidden" name="rms_uid" value="{{ rms_uid }}" />
+          <input type="hidden" name="limit" value="{{ limit }}" />
+          <input type="hidden" name="cursor_pm" value="{{ request.args.get('cursor_pm', '') }}" />
+          <input type="hidden" name="cursor_dm" value="{{ dm_meta.cursor }}" />
+          <button type="submit">Следующая страница delivery_map</button>
+        </form>
+      {% endif %}
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0;">Карта провайдеров</h2>
+    <p class="muted" style="margin-top:0;">
+      Вынесена на отдельную страницу: <code>GET /api/v1/warehouse/provider_map</code>.
+    </p>
+    <a class="btn-secondary" style="display:inline-block; text-decoration:none;" href="/warehouses/provider_map">Открыть карту провайдеров</a>
+  </div>
+
+  {% if can_mutate %}
+    <div class="card">
+      <h2 style="margin-top:0;">Создать маршрут</h2>
+      <p class="muted"><code>POST /api/v1/warehouse/delivery_route</code></p>
+      <form method="post" action="/warehouses/delivery_routes/create">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+        <p>
+          <label>from_warehouse_uid<br />
+            <input name="from_warehouse_uid" type="text" required style="width:100%; max-width:420px;" placeholder="UUID склада-источника" />
+          </label>
+        </p>
+        <p>
+          <label>to_warehouse_uid<br />
+            <input name="to_warehouse_uid" type="text" required style="width:100%; max-width:420px;" placeholder="UUID склада-получателя" />
+          </label>
+        </p>
+        <p>
+          <label>delivery_days<br />
+            <input name="delivery_days" type="number" value="0" required style="width:100px;" />
+          </label>
+        </p>
+        <p>
+          <label><input type="checkbox" name="is_active" value="true" checked /> is_active</label>
+        </p>
+        <button type="submit">Создать</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0;">Изменить маршрут</h2>
+      <p class="muted"><code>PATCH /api/v1/warehouse/delivery_route/{from_uid}/{to_uid}</code></p>
+      <form method="post" action="/warehouses/delivery_routes/update">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+        <p>
+          <label>from_warehouse_uid<br />
+            <input name="from_warehouse_uid" type="text" required style="width:100%; max-width:420px;" />
+          </label>
+        </p>
+        <p>
+          <label>to_warehouse_uid<br />
+            <input name="to_warehouse_uid" type="text" required style="width:100%; max-width:420px;" />
+          </label>
+        </p>
+        <p>
+          <label>delivery_days (пусто = не менять)<br />
+            <input name="delivery_days" type="number" style="width:100px;" />
+          </label>
+        </p>
+        <p>
+          <label><input type="checkbox" name="is_active" value="true" checked /> is_active</label>
+        </p>
+        <button type="submit">Обновить</button>
+      </form>
+    </div>
+  {% endif %}
+  </div>
+{% endblock %}

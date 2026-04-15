@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Вход в RMS Admin</title>
+    <style>
+      :root {
+        --bg: #f1f5f9;
+        --surface: #ffffff;
+        --text: #0f172a;
+        --text-muted: #64748b;
+        --border: #e2e8f0;
+        --primary: #2563eb;
+        --primary-hover: #1d4ed8;
+        --danger: #dc2626;
+        --radius: 10px;
+        --shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+        --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+        --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      }
+      *, *::before, *::after { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: var(--font);
+        font-size: 15px;
+        line-height: 1.5;
+        color: var(--text);
+        background: var(--bg);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px 16px 40px;
+      }
+      .login-wrap {
+        width: 100%;
+        max-width: 520px;
+      }
+      .login-brand {
+        text-align: center;
+        font-weight: 700;
+        font-size: 1.1rem;
+        letter-spacing: 0.02em;
+        margin-bottom: 16px;
+        color: var(--text);
+      }
+      .card {
+        background: var(--surface);
+        border-radius: var(--radius);
+        padding: 22px 24px;
+        margin-bottom: 14px;
+        border: 1px solid var(--border);
+        box-shadow: var(--shadow-md);
+      }
+      h1 {
+        font-size: 1.35rem;
+        font-weight: 700;
+        margin: 0 0 10px 0;
+        letter-spacing: -0.02em;
+      }
+      h3 {
+        font-size: 1rem;
+        font-weight: 600;
+        margin: 0 0 10px 0;
+      }
+      .muted { color: var(--text-muted); font-size: 0.9rem; }
+      code { font-size: 0.82rem; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; }
+      .alert-error {
+        border-radius: var(--radius);
+        padding: 12px 14px;
+        margin-bottom: 14px;
+        border: 1px solid var(--border);
+        border-left: 4px solid var(--danger);
+        background: var(--surface);
+        box-shadow: var(--shadow);
+        color: var(--text);
+      }
+      label { display: inline-block; margin-bottom: 6px; cursor: pointer; }
+      input[type="text"],
+      input[type="radio"],
+      textarea {
+        font-family: inherit;
+        font-size: 0.9rem;
+      }
+      input[type="text"],
+      textarea {
+        border-radius: 8px;
+        border: 1px solid #cbd5e1;
+        padding: 8px 10px;
+      }
+      input[type="text"]:focus-visible,
+      textarea:focus-visible {
+        outline: 2px solid var(--primary);
+        outline-offset: 1px;
+        border-color: var(--primary);
+      }
+      button {
+        font-family: inherit;
+        font-size: 0.9rem;
+        font-weight: 600;
+        cursor: pointer;
+        border-radius: 8px;
+        border: none;
+        padding: 9px 16px;
+        background: var(--primary);
+        color: #fff;
+      }
+      button:hover { background: var(--primary-hover); }
+      a {
+        color: var(--primary);
+        font-weight: 600;
+        text-decoration: none;
+      }
+      a:hover { text-decoration: underline; }
+      hr {
+        border: none;
+        border-top: 1px solid var(--border);
+        margin: 18px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="login-wrap">
+      <div class="login-brand">RMS Admin</div>
+      <div class="card">
+        <h1>Вход</h1>
+        <p class="muted" style="margin-top:0;">
+          Текущий RMS API: <code>{{ selected_rms_base_url }}</code><br />
+          Окружение: <strong>{{ selected_rms_environment }}</strong>
+        </p>
+        {% if error %}
+          <div class="alert-error">{{ error }}</div>
+        {% endif %}
+
+        <hr />
+        <h3>Окружение RMS</h3>
+        <form method="post" action="/login/environment">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <p>
+            <label>
+              <input type="radio" name="environment" value="dev" {% if selected_rms_environment == "dev" %}checked{% endif %} />
+              DEV
+            </label>
+            {% if rms_env_options.dev %}
+              <code>{{ rms_env_options.dev }}</code>
+            {% else %}
+              <span class="muted">(не задан в .env)</span>
+            {% endif %}
+          </p>
+          <p>
+            <label>
+              <input type="radio" name="environment" value="prod" {% if selected_rms_environment == "prod" %}checked{% endif %} />
+              PROD
+            </label>
+            {% if rms_env_options.prod %}
+              <code>{{ rms_env_options.prod }}</code>
+            {% else %}
+              <span class="muted">(не задан в .env)</span>
+            {% endif %}
+          </p>
+          <p>
+            <label>
+              <input type="radio" name="environment" value="custom" {% if selected_rms_environment == "custom" %}checked{% endif %} />
+              Custom URL
+            </label><br />
+            <input
+              type="text"
+              name="custom_rms_api_base_url"
+              placeholder="https://rms-dev.example.com"
+              style="width: 100%; max-width: 100%; margin-top: 6px;"
+            />
+          </p>
+          <p><button type="submit">Применить окружение</button></p>
+        </form>
+
+        {% if dev_stub %}
+          <p>Включен DEV_AUTH_STUB. Для старта каркаса используйте заглушку.</p>
+          <p><a href="/callback?code=local-dev-code">Войти (dev stub)</a></p>
+        {% elif keycloak_url %}
+          <p>Используется реальный вход через Keycloak.</p>
+          <p><a href="{{ keycloak_url }}">Войти через Keycloak</a></p>
+        {% else %}
+          <div class="alert-error" style="margin-bottom:0;">Не хватает KEYCLOAK_* переменных в .env.</div>
+        {% endif %}
+
+        {% if allow_manual_token %}
+          <hr />
+          <h3>Ручной вход по токену</h3>
+          <p class="muted">Вставьте bearer token (можно с префиксом <code>Bearer</code>).</p>
+          <form method="post" action="/login/token">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+            <textarea
+              name="access_token"
+              rows="6"
+              placeholder="eyJhbGciOi..."
+              style="width: 100%; max-width: 100%; resize: vertical;"
+            ></textarea>
+            <p><button type="submit">Войти по токену</button></p>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+  </body>
+</html>

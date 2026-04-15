@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block content %}
+  <p class="toolbar"><a class="back-link" href="/appointments">← К списку записей</a></p>
+  <h1>Запись</h1>
+
+  {% if action_message %}
+    <div class="alert {% if action_type == 'error' %}alert-error{% elif action_type == 'warning' %}alert-warning{% else %}alert-success{% endif %}">
+      {{ action_message }}
+    </div>
+  {% endif %}
+
+  {% if error %}
+    {% set rms_error_prefix = "Не удалось загрузить запись: " %}
+    {% include "includes/rms_inline_error.html" %}
+  {% else %}
+    <div class="card">
+      <h3 style="margin-bottom:14px;">Параметры</h3>
+      {% set sc_uid = appointment.service_center_uid or appointment.sc_uid %}
+      <dl class="dl-grid">
+        <div><dt>Внутренний UID</dt><dd class="col-mono" style="font-size:0.85rem;">{{ appointment.uid or uid }}</dd></div>
+        <div>
+          <dt>Сервисный центр</dt>
+          <dd>
+            {% if sc_uid %}
+              <a href="/service_centers/{{ sc_uid }}">Открыть карточку СЦ</a>
+              <span class="muted" style="font-size:0.8rem; display:block; margin-top:4px;" title="{{ sc_uid }}">UUID в подсказке</span>
+            {% else %}
+              —
+            {% endif %}
+          </dd>
+        </div>
+        <div><dt>Дата / время</dt><dd>{{ appointment.datetime or appointment.start_at or appointment.slot_start or "—" }}</dd></div>
+        <div><dt>Статус</dt><dd>{{ appointment.status or "—" }}</dd></div>
+        <div><dt>Клиент</dt><dd>{{ appointment.client_name or "—" }}</dd></div>
+        <div><dt>Телефон</dt><dd>{{ appointment.client_phone or "—" }}</dd></div>
+      </dl>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-bottom:10px;">Действия</h3>
+      {% if (appointment.status or "")|lower == "cancelled" %}
+        <span class="muted">Запись уже отменена.</span>
+      {% else %}
+        <form method="post" action="/appointments/{{ uid }}/cancel" onsubmit="return confirm('Отменить запись?');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <button type="submit" class="btn-secondary">Отменить запись</button>
+        </form>
+      {% endif %}
+    </div>
+  {% endif %}
+{% endblock %}

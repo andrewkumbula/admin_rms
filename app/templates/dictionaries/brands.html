@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="data-page">
+    <p class="toolbar"><a class="back-link" href="/dictionaries">← Справочники</a></p>
+    <h1>Бренды</h1>
+    {% if error %}
+      {% include "includes/rms_inline_error.html" %}
+    {% elif not items %}
+      <div class="card">Нет данных</div>
+    {% else %}
+      <div class="card data-table-card" data-table-filter-wrap>
+        <div class="table-filter-bar">
+          <label for="tbl-filter-br">Поиск в таблице</label>
+          <input type="search" id="tbl-filter-br" data-table-filter placeholder="Текст по всем колонкам…" autocomplete="off" />
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th class="col-num">№</th>
+                <th>MDM ID</th>
+                <th>Название</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in items %}
+                <tr>
+                  <td class="col-num">{{ loop.index }}</td>
+                  <td class="col-mono">{{ row.mdm_brand_id or "—" }}</td>
+                  <td>{{ row.brand_name or row.name or "—" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
+    <div class="card data-pager">
+      {% if page.has_more and page.next_cursor %}
+        <a href="/dictionaries/brands?cursor={{ page.next_cursor|urlencode }}">Следующая страница →</a>
+      {% else %}
+        <span class="muted">Конец списка</span>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

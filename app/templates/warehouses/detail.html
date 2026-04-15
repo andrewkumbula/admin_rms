@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+{% block content %}
+  <p class="toolbar">
+    <a class="back-link" href="/warehouses">← К списку складов</a>
+    <span class="muted">·</span>
+    <a href="/warehouses/delivery_routes">Маршруты и карты</a>
+  </p>
+
+  {% if wh_msg %}
+    <div class="alert {% if wh_msg_type == 'error' %}alert-error{% elif wh_msg_type == 'success' %}alert-success{% else %}alert-info{% endif %}">
+      {{ wh_msg }}
+    </div>
+  {% endif %}
+
+  {% if error %}
+    <h1>Склад {{ uid }}</h1>
+    {% include "includes/rms_inline_error.html" %}
+  {% elif not warehouse %}
+    <h1>Склад {{ uid }}</h1>
+    <div class="card">Нет данных</div>
+  {% else %}
+    {% set providers = warehouse.providers if warehouse.providers else [] %}
+    {% set existing_codes = providers | map(attribute='provider') | list %}
+
+    <h1>{{ warehouse.name or "Склад" }}</h1>
+
+    <div class="card">
+      <h3 style="margin-top:0;">Основное</h3>
+      <p><strong>UID:</strong> <span class="col-mono" style="font-size:0.85rem;">{{ warehouse.uid or uid }}</span></p>
+      <p><strong>acceptance_time:</strong> {{ warehouse.acceptance_time if warehouse.acceptance_time is defined else "—" }}</p>
+      <p><strong>СЦ:</strong>
+        {% if warehouse.service_center and warehouse.service_center.service_center_uid %}
+          <a href="/service_centers/{{ warehouse.service_center.service_center_uid }}">{{ warehouse.service_center.name or warehouse.service_center.service_center_uid }}</a>
+        {% else %}
+          —
+        {% endif %}
+      </p>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">Поставщики</h3>
+      <p class="muted" style="margin-top:0;">
+        Коды ROSSKO, BERG, 1С и т.д. хранятся в RMS как внешние системы склада
+        (<code>POST/PATCH …/warehouse/{uid}/external_system</code>). У каждого типа не более одной привязки на склад.
+      </p>
+
+      {% if providers %}
+        <div data-table-filter-wrap style="margin-bottom:16px; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden;">
+          <div class="table-filter-bar" style="border-bottom:1px solid var(--border);">
+            <label for="tbl-filter-wh-prov">Поиск в таблице</label>
+            <input type="search" id="tbl-filter-wh-prov" data-table-filter placeholder="Текст по всем колонкам…" autocomplete="off" />
+          </div>
+          <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Поставщик</th>
+                <th>ID в системе</th>
+                {% if can_manage_external %}<th style="min-width:170px;">Действия</th>{% endif %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for p in providers %}
+                <tr data-provider-edit-row>
+                  <td>
+                    <strong>{{ provider_labels.get(p.provider, p.provider) }}</strong>
+                    <span class="muted" style="font-size:0.8rem; display:block;">код API: <code>{{ p.provider }}</code></span>
+                  </td>
+                  <td class="col-mono">
+                    <span class="wh-provider-id-text">{{ p.ids or "—" }}</span>
+                    {% if can_manage_external and p.provider in system_names %}
+                      <form method="post" action="/warehouses/{{ uid }}/external_system/patch" class="wh-provider-id-form" style="display:none;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                        <input type="hidden" name="system_name" value="{{ p.provider }}" />
+                        <input
+                          type="text"
+                          name="system_id"
+                          value="{{ p.ids or '' }}"
+                          required
+                          style="min-width:140px; max-width:220px;"
+                          maxlength="128"
+                          aria-label="Новый ID для {{ p.provider }}"
+                          data-original-id="{{ p.ids or '' }}"
+                        />
+                        <button type="submit" class="btn-secondary">Сохранить ID</button>
+                      </form>
+                    {% endif %}
+                  </td>
+                  {% if can_manage_external %}
+                    <td>
+                      {% if p.provider in system_names %}
+                        <button type="button" class="btn-secondary wh-provider-edit-btn">Изменить</button>
+                        <button type="button" class="btn-secondary wh-provider-cancel-btn" style="display:none;">Отмена</button>
+                      {% else %}
+                        <span class="muted">Неизвестный тип в RMS — правка из админки недоступна.</span>
+                      {% endif %}
+                    </td>
+                  {% endif %}
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          </div>
+        </div>
+      {% else %}
+        <p class="muted">Поставщики не привязаны.</p>
+      {% endif %}
+
+      {% if can_manage_external %}
+        <h4 style="margin-bottom:8px;">Добавить поставщика</h4>
+        {% set ns = namespace(has_gap=false) %}
+        {% for s in system_names %}
+          {% if s not in existing_codes %}
+            {% set ns.has_gap = true %}
+          {% endif %}
+        {% endfor %}
+        {% if not ns.has_gap %}
+          <p class="muted" style="margin-bottom:0;">Все типы из каталога уже привязаны. Чтобы изменить код, используйте колонку «Действия» в таблице выше.</p>
+        {% else %}
+          <form method="post" action="/warehouses/{{ uid }}/external_system/create" style="max-width:520px;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+            <p style="margin:0 0 10px 0;">
+              <label for="sn_new">Тип</label><br />
+              <select id="sn_new" name="system_name" required style="min-width:220px;">
+                {% for s in system_names %}
+                  {% if s not in existing_codes %}
+                    <option value="{{ s }}">{{ provider_labels.get(s, s) }} ({{ s }})</option>
+                  {% endif %}
+                {% endfor %}
+              </select>
+            </p>
+            <p style="margin:0 0 12px 0;">
+              <label for="sid_new">ID в системе поставщика</label><br />
+              <input id="sid_new" name="system_id" type="text" required style="width:100%; max-width:400px;" maxlength="128" placeholder="например 275280" autocomplete="off" />
+            </p>
+            <button type="submit">Добавить</button>
+          </form>
+        {% endif %}
+      {% endif %}
+    </div>
+
+    {% if can_update %}
+      <div class="card">
+        <h2 style="margin-top:0;">Название и время приёмки</h2>
+        <p class="muted">RMS вернёт 422, если значения совпадают с текущими — измените хотя бы одно поле.</p>
+        <form method="post" action="/warehouses/{{ uid }}/patch">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <p>
+            <label for="name">Название</label><br />
+            <input id="name" name="name" type="text" style="width:100%; max-width:400px;" value="{{ warehouse.name or '' }}" />
+          </p>
+          <p>
+            <label for="acceptance_time">acceptance_time</label><br />
+            <input id="acceptance_time" name="acceptance_time" type="text" style="width:120px;" value="{{ warehouse.acceptance_time if warehouse.acceptance_time is defined else '' }}" />
+          </p>
+          <button type="submit">Сохранить</button>
+        </form>
+      </div>
+    {% endif %}
+
+    {% if can_delete %}
+      <div class="card card-zone-danger">
+        <h2 style="margin-top:0;">Удаление</h2>
+        <p class="muted">Каскадно удалятся связанные сущности в RMS (маршруты, wh_external_ids).</p>
+        <form method="post" action="/warehouses/{{ uid }}/delete" onsubmit="return confirm('Удалить склад?');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <button type="submit">Удалить</button>
+        </form>
+      </div>
+    {% endif %}
+  {% endif %}
+  {% if can_manage_external %}
+    <script>
+      (function () {
+        const rows = document.querySelectorAll("[data-provider-edit-row]");
+        rows.forEach(function (row) {
+          const text = row.querySelector(".wh-provider-id-text");
+          const form = row.querySelector(".wh-provider-id-form");
+          const input = form ? form.querySelector("input[name='system_id']") : null;
+          const editBtn = row.querySelector(".wh-provider-edit-btn");
+          const cancelBtn = row.querySelector(".wh-provider-cancel-btn");
+          if (!text || !form || !input || !editBtn || !cancelBtn) {
+            return;
+          }
+          editBtn.addEventListener("click", function () {
+            text.hidden = true;
+            form.style.display = "flex";
+            form.style.flexWrap = "wrap";
+            form.style.gap = "8px";
+            form.style.alignItems = "center";
+            editBtn.style.display = "none";
+            cancelBtn.style.display = "";
+            input.focus();
+            input.select();
+          });
+          cancelBtn.addEventListener("click", function () {
+            input.value = input.getAttribute("data-original-id") || "";
+            form.style.display = "none";
+            form.style.flexWrap = "";
+            form.style.gap = "";
+            form.style.alignItems = "";
+            text.hidden = false;
+            editBtn.style.display = "";
+            cancelBtn.style.display = "none";
+          });
+        });
+      })();
+    </script>
+  {% endif %}
+{% endblock %}

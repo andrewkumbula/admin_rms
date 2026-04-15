@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="data-page">
+    <h1>Склады</h1>
+    <p class="muted" style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
+      <a href="/warehouses/delivery_routes">Межскладские маршруты (delivery_map)</a>
+      <span>·</span>
+      <a href="/warehouses/provider_map">Карта провайдеров (provider_map)</a>
+    </p>
+
+    {% if wh_msg %}
+      <div class="alert {% if wh_msg_type == 'error' %}alert-error{% elif wh_msg_type == 'success' %}alert-success{% else %}alert-info{% endif %}">
+        {{ wh_msg }}
+      </div>
+    {% endif %}
+
+    {% if can_create %}
+      <p><a href="/warehouses/new">Создать склад</a></p>
+    {% endif %}
+
+    {% if error %}
+      {% include "includes/rms_inline_error.html" %}
+    {% elif not items %}
+      <div class="card">Нет складов</div>
+    {% else %}
+      <div class="card data-table-card" data-table-filter-wrap>
+        <div class="table-filter-bar">
+          <label for="tbl-filter-wh">Поиск в таблице</label>
+          <input
+            type="search"
+            id="tbl-filter-wh"
+            data-table-filter
+            placeholder="Текст по всем колонкам загруженной страницы…"
+            autocomplete="off"
+          />
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th class="col-num">№</th>
+                <th>Название</th>
+                <th>Приёмка</th>
+                <th>Сервисный центр</th>
+                <th>Провайдеры</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in items %}
+                <tr>
+                  <td class="col-num">{{ loop.index }}</td>
+                  <td class="col-name">
+                    {% if item.uid %}
+                      <a href="/warehouses/{{ item.uid }}">{{ item.name or "—" }}</a>
+                    {% else %}
+                      {{ item.name or "—" }}
+                    {% endif %}
+                  </td>
+                  <td>{{ item.acceptance_time if item.acceptance_time is defined else "—" }}</td>
+                  <td>
+                    {% if item.service_center and item.service_center.service_center_uid %}
+                      <a href="/service_centers/{{ item.service_center.service_center_uid }}">{{ item.service_center.name or "СЦ" }}</a>
+                    {% else %}
+                      —
+                    {% endif %}
+                  </td>
+                  <td class="col-addr" style="max-width: 320px;">
+                    {% if item.providers %}
+                      {% for p in item.providers %}
+                        <span class="muted">{{ p.provider }}: {{ p.ids }}</span>{% if not loop.last %}<br />{% endif %}
+                      {% endfor %}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% if page.has_more and page.next_cursor %}
+        <div class="card data-pager">
+          <a href="/warehouses?cursor={{ page.next_cursor|urlencode }}">Следующая страница →</a>
+        </div>
+      {% endif %}
+    {% endif %}
+  </div>
+{% endblock %}

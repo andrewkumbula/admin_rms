@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="data-page">
+    <h1>Карта провайдеров</h1>
+    <p class="toolbar"><a class="back-link" href="/warehouses/delivery_routes">← Маршруты и карты</a></p>
+
+    <div class="card">
+      <form id="wh-pm-form" method="get" action="/warehouses/provider_map" class="data-filters">
+        <div style="min-width: 260px">
+          {% set suffix = "whpm" %}
+          {% set hidden_name = "rms_uid" %}
+          {% set field_label = "Сервисный центр (фильтр provider_map)" %}
+          {% set options = sc_options %}
+          {% set selected_uid = rms_uid %}
+          {% set selected_label = selected_sc_label|default('') %}
+          {% set require_sc = false %}
+          {% set form_id = "wh-pm-form" %}
+          {% include "includes/sc_combobox_field.html" %}
+        </div>
+        <label>
+          limit (10–100)
+          <input id="limit" name="limit" type="text" value="{{ limit }}" style="min-width:80px;" />
+        </label>
+        <button type="submit">Показать</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0;">Данные (<code>GET /api/v1/warehouse/provider_map</code>)</h2>
+      {% if pm_err %}
+        {% set error = pm_err %}
+        {% include "includes/rms_inline_error.html" %}
+      {% elif not pm_rows %}
+        <p class="muted">Нет данных (или 404 от RMS)</p>
+      {% else %}
+        <div class="card data-table-card" data-table-filter-wrap>
+          <div class="table-filter-bar">
+            <label for="tbl-filter-pm">Поиск в таблице</label>
+            <input type="search" id="tbl-filter-pm" data-table-filter placeholder="СЦ, адрес, коды провайдеров…" autocomplete="off" />
+          </div>
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="col-num">№</th>
+                  <th>Сервисный центр</th>
+                  <th>Адрес</th>
+                  <th>ROSSKO</th>
+                  <th>BERG</th>
+                  <th>1С</th>
+                  <th>FORUM_AUTO</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in pm_rows %}
+                  {% set pmap = row.providers_map or {} %}
+                  <tr>
+                    <td class="col-num">{{ loop.index }}</td>
+                    <td>
+                      {% if row.rms_uid %}
+                        <a href="/service_centers/{{ row.rms_uid }}" title="{{ row.rms_uid }}">{{ row.sc_name or row.rms_uid }}</a>
+                        <div class="muted col-mono" style="font-size:0.75rem;">{{ row.rms_uid }}</div>
+                      {% else %}
+                        —
+                      {% endif %}
+                    </td>
+                    <td>{{ row.address or "—" }}</td>
+                    <td class="col-mono">{{ pmap.get("ROSSKO") or "—" }}</td>
+                    <td class="col-mono">{{ pmap.get("BERG") or "—" }}</td>
+                    <td class="col-mono">{{ pmap.get("1C") or "—" }}</td>
+                    <td class="col-mono">{{ pmap.get("FORUM_AUTO") or "—" }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {% if pm_meta.has_more and pm_meta.cursor %}
+          <form method="get" action="/warehouses/provider_map" style="display:inline;">
+            <input type="hidden" name="rms_uid" value="{{ rms_uid }}" />
+            <input type="hidden" name="limit" value="{{ limit }}" />
+            <input type="hidden" name="cursor_pm" value="{{ pm_meta.cursor }}" />
+            <button type="submit">Следующая страница provider_map</button>
+          </form>
+        {% endif %}
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

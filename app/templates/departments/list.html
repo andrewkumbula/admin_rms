@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="data-page">
+    <h1>Отделы сервисных центров</h1>
+    <p class="muted" style="margin-top: 0">
+      RMS <code>GET /api/v1/department/</code> — список СЦ с вложенными отделами; создание и правка через
+      <code>POST /api/v1/department</code>, <code>PATCH /api/v1/department/{uid}</code>, удаление
+      <code>DELETE /api/v1/department/{uid}</code>.
+    </p>
+
+    {% if dept_msg %}
+      <div class="alert {% if dept_msg_type == 'error' %}alert-error{% elif dept_msg_type == 'success' %}alert-success{% else %}alert-info{% endif %}">
+        {{ dept_msg }}
+      </div>
+    {% endif %}
+
+    {% if can_create %}
+      <p><a href="/departments/new">Создать отдел</a></p>
+    {% endif %}
+
+    <div class="card">
+      <h3 style="margin-top: 0">Фильтр</h3>
+      <form id="dept-list-form" method="get" action="/departments" class="data-filters" style="align-items: flex-end; flex-wrap: wrap; gap: 14px;">
+        <div style="flex: 1; min-width: 260px">
+          {% set suffix = "dl" %}
+          {% set hidden_name = "sc_uid" %}
+          {% set field_label = "Сервисный центр (необязательно)" %}
+          {% set options = sc_options %}
+          {% set selected_uid = sc_uid %}
+          {% set selected_label = selected_sc_label %}
+          {% set require_sc = false %}
+          {% set form_id = "dept-list-form" %}
+          {% include "includes/sc_combobox_field.html" %}
+        </div>
+        <label>
+          external_uid (необязательно, UUID)
+          <input type="text" name="external_uid" value="{{ external_uid }}" placeholder="фильтр по 1С UID" autocomplete="off" style="min-width: 220px" />
+        </label>
+        <button type="submit">Применить</button>
+        <a class="btn-secondary" href="/departments" style="display: inline-block; text-decoration: none; line-height: 1.2">Сбросить</a>
+      </form>
+    </div>
+
+    {% if error %}
+      {% include "includes/rms_inline_error.html" %}
+    {% elif not items %}
+      <div class="card"><p class="muted" style="margin: 0">Нет отделов по текущему запросу или в RMS нет данных.</p></div>
+    {% else %}
+      <div class="card data-table-card" data-table-filter-wrap>
+        <div class="table-filter-bar">
+          <label for="tbl-filter-dept">Поиск в таблице</label>
+          <input type="search" id="tbl-filter-dept" data-table-filter placeholder="Текст по строкам…" autocomplete="off" />
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th class="col-num">№</th>
+                <th>Сервисный центр</th>
+                <th>Отдел</th>
+                <th>external_uid</th>
+                <th class="col-mono">UID отдела</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in items %}
+                <tr>
+                  <td class="col-num">{{ loop.index }}</td>
+                  <td>
+                    {% if row.service_center_uid %}
+                      <a href="/service_centers/{{ row.service_center_uid }}">{{ row.service_center_name or row.service_center_uid }}</a>
+                    {% else %}
+                      —
+                    {% endif %}
+                  </td>
+                  <td>{{ row.name or "—" }}</td>
+                  <td class="col-mono" style="font-size: 0.8rem">{{ row.external_uid or "—" }}</td>
+                  <td class="col-mono" style="font-size: 0.75rem" title="{{ row.department_uid }}">
+                    {% if row.department_uid|length > 22 %}{{ row.department_uid[:18] }}…{% else %}{{ row.department_uid or "—" }}{% endif %}
+                  </td>
+                  <td style="white-space: nowrap">
+                    {% if can_update %}
+                      <a
+                        href="/departments/{{ row.department_uid }}/edit?prefill_name={{ (row.name or '')|urlencode }}&amp;prefill_sc={{ row.service_center_uid|urlencode }}&amp;prefill_ext={{ (row.external_uid or '')|urlencode }}"
+                        >Изменить</a>
+                    {% endif %}
+                    {% if can_delete %}
+                      <form
+                        method="post"
+                        action="/departments/{{ row.department_uid }}/delete"
+                        style="display: inline; margin-left: 8px"
+                        onsubmit="return confirm('Удалить отдел {{ (row.name or row.department_uid)|e }}?');"
+                      >
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                        <button type="submit" class="btn-secondary" style="padding: 4px 10px; font-size: 0.85rem">Удалить</button>
+                      </form>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="card data-pager">
+      {% if page.has_more and page.next_cursor %}
+        <a
+          href="/departments?cursor={{ page.next_cursor|urlencode }}{% if sc_uid %}&amp;sc_uid={{ sc_uid|urlencode }}{% endif %}{% if external_uid %}&amp;external_uid={{ external_uid|urlencode }}{% endif %}"
+          >Следующая страница →</a>
+      {% else %}
+        <span class="muted">Конец списка</span>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

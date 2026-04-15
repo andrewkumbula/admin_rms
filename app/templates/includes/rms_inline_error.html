@@ -1,0 +1,33 @@
+{# Ожидает: error. Опционально: rms_error_prefix, rms_error_suffix (уникальный суффикс для id при нескольких блоках на странице) #}
+{% if error %}
+  {% set _rms_suf = rms_error_suffix | default("") %}
+  <div class="alert alert-error">
+    <p style="margin: 0 0 {% if rms_error_suggests_token_refresh(error) %}12px{% else %}0{% endif %} 0">
+      {% if rms_error_prefix %}{{ rms_error_prefix }}{% endif %}{{ error }}
+    </p>
+    {% if rms_error_suggests_token_refresh(error) %}
+      <form
+        method="post"
+        action="{{ url_for('auth.update_session_token') }}"
+        style="margin-top: 4px; padding-top: 12px; border-top: 1px solid rgba(220, 38, 38, 0.22)"
+      >
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+        <input type="hidden" name="next" value="{{ request.full_path }}" />
+        <label for="rms-inline-access-token{{ _rms_suf }}" style="display: block; font-size: 0.875rem; color: var(--text-muted); margin-bottom: 6px"
+          >Новый access token</label
+        >
+        <textarea
+          id="rms-inline-access-token{{ _rms_suf }}"
+          name="access_token"
+          rows="3"
+          style="width: 100%; max-width: 560px; font-family: ui-monospace, monospace; font-size: 0.8rem; padding: 8px; border-radius: 8px; border: 1px solid var(--border)"
+          placeholder="Вставьте JWT (префикс Bearer необязателен)…"
+          autocomplete="off"
+        ></textarea>
+        <p style="margin: 10px 0 0 0">
+          <button type="submit">Сохранить токен и обновить эту страницу</button>
+        </p>
+      </form>
+    {% endif %}
+  </div>
+{% endif %}
