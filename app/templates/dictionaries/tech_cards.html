@@ -70,46 +70,9 @@
 
     {% if can_create %}
       <div class="card">
-        <h3 style="margin-top:0;">Создать техкарту</h3>
-        <p class="muted" style="margin-top:0;">
-          Вызов <code>POST /api/v1/tech_specification</code> с одной связкой: работа + тип ресурса + бренд + количество.
-        </p>
-        <form id="tc-create-form" method="post" action="/dictionaries/tech_cards/create">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
-          <input type="hidden" name="work_uid" id="h-create-work-uid" value="" />
-          <input type="hidden" name="brand_uid" id="h-create-brand-uid" value="" />
-          <input type="hidden" name="resource_type_uid" id="h-create-rt-uid" value="" />
-          <div class="data-filters" style="align-items: flex-start; flex-direction: column; gap: 16px;">
-            <div style="width:100%; max-width:520px;">
-              <label for="tc-create-work-in" style="font-weight:600;">Работа</label>
-              <div class="tc-combobox" id="tc-create-work-combo" role="combobox" aria-expanded="false" aria-haspopup="listbox">
-                <input type="text" id="tc-create-work-in" class="tc-combobox-in" autocomplete="off" placeholder="Введите работу или выберите из списка…" aria-autocomplete="list" aria-controls="tc-create-work-list" />
-                <ul class="tc-combobox-dropdown" id="tc-create-work-list" role="listbox" hidden></ul>
-              </div>
-            </div>
-            <div style="width:100%; max-width:520px;">
-              <label for="tc-create-brand-in" style="font-weight:600;">Бренд</label>
-              <div class="tc-combobox" id="tc-create-brand-combo" role="combobox" aria-expanded="false" aria-haspopup="listbox">
-                <input type="text" id="tc-create-brand-in" class="tc-combobox-in" autocomplete="off" placeholder="Введите бренд или выберите из списка…" aria-autocomplete="list" aria-controls="tc-create-brand-list" />
-                <ul class="tc-combobox-dropdown" id="tc-create-brand-list" role="listbox" hidden></ul>
-              </div>
-            </div>
-            <div style="width:100%; max-width:520px;">
-              <label for="tc-create-rt-in" style="font-weight:600;">Тип ресурса</label>
-              <div class="tc-combobox" id="tc-create-rt-combo" role="combobox" aria-expanded="false" aria-haspopup="listbox">
-                <input type="text" id="tc-create-rt-in" class="tc-combobox-in" autocomplete="off" placeholder="Введите тип ресурса или выберите из списка…" aria-autocomplete="list" aria-controls="tc-create-rt-list" />
-                <ul class="tc-combobox-dropdown" id="tc-create-rt-list" role="listbox" hidden></ul>
-              </div>
-            </div>
-            <div style="width:100%; max-width:220px;">
-              <label for="tc-create-qty" style="font-weight:600;">Количество</label>
-              <input id="tc-create-qty" type="number" min="1" step="1" name="quantity" value="1" required />
-            </div>
-            <div class="tc-filter-actions">
-              <button type="submit">Создать техкарту</button>
-            </div>
-          </div>
-        </form>
+        <h3 style="margin-top:0;">Создание техкарты</h3>
+        <p class="muted" style="margin-top:0;">Создание вынесено на отдельную форму с поддержкой нескольких типов ресурса.</p>
+        <a class="btn-secondary" href="{{ create_url }}" style="display:inline-block; text-decoration:none;">Открыть форму создания</a>
       </div>
     {% endif %}
 
@@ -224,7 +187,6 @@
     (function () {
       var TC_BRANDS = {{ brand_options|tojson }};
       var TC_WORKS = {{ work_options|tojson }};
-      var TC_RESOURCE_TYPES = {{ resource_type_options|tojson }};
 
       function bindCombobox(root, items, hiddenInputId) {
         var input = root.querySelector(".tc-combobox-in");
@@ -411,33 +373,6 @@
           });
         }
 
-        bindCombobox(document.getElementById("tc-create-work-combo"), TC_WORKS, "h-create-work-uid");
-        bindCombobox(document.getElementById("tc-create-brand-combo"), TC_BRANDS, "h-create-brand-uid");
-        bindCombobox(document.getElementById("tc-create-rt-combo"), TC_RESOURCE_TYPES, "h-create-rt-uid");
-
-        var createForm = document.getElementById("tc-create-form");
-        if (createForm) {
-          createForm.addEventListener("submit", function (e) {
-            e.preventDefault();
-            var win = document.getElementById("tc-create-work-in");
-            var whid = document.getElementById("h-create-work-uid");
-            var bin = document.getElementById("tc-create-brand-in");
-            var bhid = document.getElementById("h-create-brand-uid");
-            var rin = document.getElementById("tc-create-rt-in");
-            var rhid = document.getElementById("h-create-rt-uid");
-            var qty = document.getElementById("tc-create-qty");
-            if (!win || !whid || !bin || !bhid || !rin || !rhid || !qty) return;
-            if (!resolveUidFromInput(TC_WORKS, win, whid, "работ")) return;
-            if (!resolveUidFromInput(TC_BRANDS, bin, bhid, "брендов")) return;
-            if (!resolveUidFromInput(TC_RESOURCE_TYPES, rin, rhid, "типов ресурсов")) return;
-            var qv = (qty.value || "").trim();
-            if (!qv || Number(qv) <= 0) {
-              window.alert("Количество должно быть больше нуля.");
-              return;
-            }
-            HTMLFormElement.prototype.submit.call(createForm);
-          });
-        }
       }
 
       if (document.readyState === "loading") {

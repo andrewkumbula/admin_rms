@@ -149,34 +149,9 @@ def _resource_type_option_label(row: dict) -> str:
     return str(row.get("uid") or "—")
 
 
-def _redirect_tech_cards(msg: Optional[str] = None, msg_type: str = "info") -> str:
-    q: Dict[str, str] = {}
-    if msg:
-        q["tc_msg"] = msg
-        q["tc_msg_type"] = msg_type
-    return url_for("dictionaries.tech_cards", **q)
-
-
-@bp.get("/tech_cards")
-@require_permission("dictionary.tech_card.read")
-def tech_cards():
-    cursor = (request.args.get("cursor") or "").strip()
-    brand_uid = (request.args.get("brand_uid") or "").strip()
-    work_uid = (request.args.get("work_uid") or "").strip()
-
-    params: dict[str, Any] = {"limit": RMS_LIST_PAGE_LIMIT}
-    if cursor:
-        params["cursor"] = cursor
-    if brand_uid:
-        params["brand_uid"] = brand_uid
-    if work_uid:
-        params["work_uid"] = work_uid
-
-    client = RMSClient()
-    resp = client.get("/api/v1/tech_specification_list", params=params)
-    items = _parse_tech_cards(resp.data)
-    meta = _parse_tech_metadata(resp.data)
-
+def _fetch_tech_card_form_options(
+    client: RMSClient,
+) -> tuple[List[dict[str, str]], List[dict[str, str]], Dict[str, List[dict[str, str]]], Dict[str, str]]:
     brand_rows = _fetch_paginated_top_level(client, "/api/v1/brands", _TECH_CARD_FILTER_OPTIONS_MAX)
     work_rows = _fetch_paginated_top_level(client, "/api/v1/works", _TECH_CARD_FILTER_OPTIONS_MAX)
     resource_type_rows = _fetch_paginated_top_level(
@@ -201,18 +176,64 @@ def tech_cards():
         seen_w.add(uid)
         work_options.append({"uid": uid, "label": _work_option_label(row)})
 
-    resource_type_options: List[dict[str, str]] = []
+    resource_types_by_parent: Dict[str, List[dict[str, str]]] = {}
+    resource_type_parent_by_uid: Dict[str, str] = {}
     seen_rt: set[str] = set()
     for row in resource_type_rows:
         uid = str(row.get("uid") or "").strip()
         if not uid or uid in seen_rt:
             continue
         seen_rt.add(uid)
-        resource_type_options.append({"uid": uid, "label": _resource_type_option_label(row)})
+        child = str(row.get("children_resource_type") or "").strip()
+        parent = str(row.get("parent_resource_type") or "").strip() or "Без родителя"
+        label = child or str(row.get("uid") or "—")
+        resource_types_by_parent.setdefault(parent, []).append({"uid": uid, "label": label})
+        resource_type_parent_by_uid[uid] = parent
 
     brand_options.sort(key=lambda x: x["label"].casefold())
     work_options.sort(key=lambda x: x["label"].casefold())
-    resource_type_options.sort(key=lambda x: x["label"].casefold())
+    for parent in list(resource_types_by_parent.keys()):
+        resource_types_by_parent[parent].sort(key=lambda x: x["label"].casefold())
+    return brand_options, work_options, resource_types_by_parent, resource_type_parent_by_uid
+
+
+def _redirect_tech_cards(msg: Optional[str] = None, msg_type: str = "info") -> str:
+    q: Dict[str, str] = {}
+    if msg:
+        q["tc_msg"] = msg
+        q["tc_msg_type"] = msg_type
+    return url_for("dictionaries.tech_cards", **q)
+
+
+def _redirect_tech_cards_new(msg: Optional[str] = None, msg_type: str = "info") -> str:
+    q: Dict[str, str] = {}
+    if msg:
+        q["tc_msg"] = msg
+        q["tc_msg_type"] = msg_type
+    return url_for("dictionaries.tech_cards_new", **q)
+
+
+@bp.get("/tech_cards")
+@require_permission("dictionary.tech_card.read")
+def tech_cards():
+    cursor = (request.args.get("cursor") or "").strip()
+    brand_uid = (request.args.get("brand_uid") or "").strip()
+    work_uid = (request.args.get("work_uid") or "").strip()
+
+    params: dict[str, Any] = {"limit": RMS_LIST_PAGE_LIMIT}
+    if cursor:
+        params["cursor"] = cursor
+    if brand_uid:
+        params["brand_uid"] = brand_uid
+    if work_uid:
+        params["work_uid"] = work_uid
+
+    client = RMSClient()
+    resp = client.get("/api/v1/tech_specification_list", params=params)
+    items = _parse_tech_cards(resp.data)
+    meta = _parse_tech_metadata(resp.data)
+
+    brand_options, work_options, _, _ = _fetch_tech_card_form_options(client)
 
     return render_template(
         "dictionaries/tech_cards.html",
@@ -225,8 +246,25 @@ def tech_cards():
         selected_work_uid=work_uid,
         selected_brand_label=_label_for_uid(brand_options, brand_uid),
         selected_work_label=_label_for_uid(work_options, work_uid),
-        resource_type_options=resource_type_options,
         can_create=has_permission("dictionary.tech_card.read"),
+        create_url=url_for("dictionaries.tech_cards_new"),
+        tc_msg=request.args.get("tc_msg"),
+        tc_msg_type=request.args.get("tc_msg_type") or "info",
+    )
+
+
+@bp.get("/tech_cards/new")
+@require_permission("dictionary.tech_card.read")
+def tech_cards_new():
+    client = RMSClient()
+    brand_options, work_options, resource_types_by_parent, _ = _fetch_tech_card_form_options(client)
+    parent_options = sorted(resource_types_by_parent.keys(), key=lambda x: x.casefold())
+    return render_template(
+        "dictionaries/tech_cards_new.html",
+        brand_options=brand_options,
+        work_options=work_options,
+        resource_types_by_parent=resource_types_by_parent,
+        parent_options=parent_options,
         tc_msg=request.args.get("tc_msg"),
         tc_msg_type=request.args.get("tc_msg_type") or "info",
     )
@@ -237,36 +275,59 @@ def tech_cards():
 def tech_cards_create():
     work_uid = (request.form.get("work_uid") or "").strip()
     brand_uid = (request.form.get("brand_uid") or "").strip()
-    resource_type_uid = (request.form.get("resource_type_uid") or "").strip()
-    quantity_raw = (request.form.get("quantity") or "").strip()
+    parent_values = [str(x or "").strip() for x in request.form.getlist("parent_resource_type")]
+    resource_type_uids = [str(x or "").strip() for x in request.form.getlist("resource_type_uid")]
+    quantity_values = [str(x or "").strip() for x in request.form.getlist("quantity")]
 
     if not work_uid:
-        return redirect(_redirect_tech_cards("Выберите работу", "error"))
+        return redirect(_redirect_tech_cards_new("Выберите работу", "error"))
     if not brand_uid:
-        return redirect(_redirect_tech_cards("Выберите бренд", "error"))
-    if not resource_type_uid:
-        return redirect(_redirect_tech_cards("Выберите тип ресурса", "error"))
-    if not quantity_raw:
-        return redirect(_redirect_tech_cards("Укажите количество ресурса", "error"))
+        return redirect(_redirect_tech_cards_new("Выберите бренд", "error"))
 
-    try:
-        quantity = int(quantity_raw)
-    except ValueError:
-        return redirect(_redirect_tech_cards("Количество должно быть целым числом", "error"))
-    if quantity <= 0:
-        return redirect(_redirect_tech_cards("Количество должно быть больше нуля", "error"))
+    if not resource_type_uids or not quantity_values:
+        return redirect(_redirect_tech_cards_new("Добавьте хотя бы один тип ресурса", "error"))
+    if not (
+        len(resource_type_uids) == len(quantity_values)
+        and len(parent_values) == len(resource_type_uids)
+    ):
+        return redirect(_redirect_tech_cards_new("Некорректный набор полей типа ресурса", "error"))
+
+    _, _, _, resource_type_parent_by_uid = _fetch_tech_card_form_options(RMSClient())
+    resource_info: List[Dict[str, Any]] = []
+    for idx, resource_type_uid in enumerate(resource_type_uids):
+        if not resource_type_uid:
+            return redirect(_redirect_tech_cards_new("Выберите тип ресурса во всех строках", "error"))
+        if resource_type_uid not in resource_type_parent_by_uid:
+            return redirect(
+                _redirect_tech_cards_new("Выбранный тип ресурса не найден в справочнике RMS", "error")
+            )
+        parent_expected = resource_type_parent_by_uid.get(resource_type_uid, "")
+        parent_selected = parent_values[idx]
+        if parent_selected and parent_expected and parent_selected != parent_expected:
+            return redirect(_redirect_tech_cards_new("Тип ресурса не соответствует выбранному родителю", "error"))
+
+        quantity_raw = quantity_values[idx]
+        if not quantity_raw:
+            return redirect(_redirect_tech_cards_new("Укажите количество ресурса во всех строках", "error"))
+        try:
+            quantity = int(quantity_raw)
+        except ValueError:
+            return redirect(_redirect_tech_cards_new("Количество должно быть целым числом", "error"))
+        if quantity <= 0:
+            return redirect(_redirect_tech_cards_new("Количество должно быть больше нуля", "error"))
+        resource_info.append(
+            {
+                "resource_type_uid": resource_type_uid,
+                "quantity": quantity,
+                "brands": [{"uid": brand_uid}],
+            }
+        )
 
     body: Dict[str, Any] = {
         "work_resources": [
             {
                 "work_uid": work_uid,
-                "resource_info": [
-                    {
-                        "resource_type_uid": resource_type_uid,
-                        "quantity": quantity,
-                        "brands": [{"uid": brand_uid}],
-                    }
-                ],
+                "resource_info": resource_info,
             }
         ]
     }

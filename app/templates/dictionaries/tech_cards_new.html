@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block head_extra %}
+  <style>
+    .tc-create-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 140px auto;
+      gap: 10px;
+      align-items: end;
+      margin-bottom: 10px;
+    }
+    .tc-create-row .btn-secondary {
+      white-space: nowrap;
+    }
+    @media (max-width: 980px) {
+      .tc-create-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+{% endblock %}
+{% block content %}
+  <div class="data-page">
+    <p class="toolbar">
+      <a class="back-link" href="/dictionaries/tech_cards">← К списку техкарт</a>
+    </p>
+    <h1>Создать техкарту</h1>
+    {% if tc_msg %}
+      <div class="alert {% if tc_msg_type == 'error' %}alert-error{% elif tc_msg_type == 'success' %}alert-success{% else %}alert-info{% endif %}">
+        {{ tc_msg }}
+      </div>
+    {% endif %}
+
+    <div class="card">
+      <p class="muted" style="margin-top:0;">
+        <code>POST /api/v1/tech_specification</code>: одна работа + один бренд + несколько типов ресурса.
+      </p>
+      <form method="post" action="/dictionaries/tech_cards/create" id="tc-create-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+
+        <p>
+          <label for="work_uid"><strong>Работа</strong></label><br />
+          <select id="work_uid" name="work_uid" required style="width:100%; max-width:620px;">
+            <option value="">— выберите работу —</option>
+            {% for o in work_options %}
+              <option value="{{ o.uid }}">{{ o.label }}</option>
+            {% endfor %}
+          </select>
+        </p>
+
+        <p>
+          <label for="brand_uid"><strong>Бренд</strong></label><br />
+          <select id="brand_uid" name="brand_uid" required style="width:100%; max-width:620px;">
+            <option value="">— выберите бренд —</option>
+            {% for o in brand_options %}
+              <option value="{{ o.uid }}">{{ o.label }}</option>
+            {% endfor %}
+          </select>
+        </p>
+
+        <h3>Типы ресурса</h3>
+        <div id="tc-resource-rows"></div>
+        <p style="margin-top: 6px;">
+          <button type="button" class="btn-secondary" id="tc-add-row">+ Добавить тип ресурса</button>
+        </p>
+
+        <p style="margin-top: 14px;">
+          <button type="submit">Создать техкарту</button>
+        </p>
+      </form>
+    </div>
+  </div>
+
+  <template id="tc-row-template">
+    <div class="tc-create-row" data-tc-row>
+      <div>
+        <label><strong>Родитель</strong></label><br />
+        <select name="parent_resource_type" data-parent required style="width:100%;">
+          <option value="">— выберите родителя —</option>
+        </select>
+      </div>
+      <div>
+        <label><strong>Тип ресурса</strong></label><br />
+        <select name="resource_type_uid" data-child required style="width:100%;">
+          <option value="">— выберите тип ресурса —</option>
+        </select>
+      </div>
+      <div>
+        <label><strong>Количество</strong></label><br />
+        <input type="number" name="quantity" min="1" step="1" value="1" required style="width:100%;" />
+      </div>
+      <div>
+        <button type="button" class="btn-secondary" data-remove-row>Удалить</button>
+      </div>
+    </div>
+  </template>
+
+  <script>
+    (function () {
+      var groups = {{ resource_types_by_parent|tojson }};
+      var parentNames = {{ parent_options|tojson }};
+      var rowsWrap = document.getElementById("tc-resource-rows");
+      var addBtn = document.getElementById("tc-add-row");
+      var tpl = document.getElementById("tc-row-template");
+      if (!groups || !rowsWrap || !addBtn || !tpl) return;
+
+      function fillParents(selectEl) {
+        selectEl.innerHTML = '<option value="">— выберите родителя —</option>';
+        parentNames.forEach(function (name) {
+          var opt = document.createElement("option");
+          opt.value = name;
+          opt.textContent = name;
+          selectEl.appendChild(opt);
+        });
+      }
+
+      function fillChildren(childEl, parentName) {
+        childEl.innerHTML = '<option value="">— выберите тип ресурса —</option>';
+        var items = groups[parentName] || [];
+        items.forEach(function (it) {
+          var opt = document.createElement("option");
+          opt.value = it.uid;
+          opt.textContent = it.label;
+          childEl.appendChild(opt);
+        });
+      }
+
+      function updateRemoveButtons() {
+        var rows = rowsWrap.querySelectorAll("[data-tc-row]");
+        rows.forEach(function (row) {
+          var remove = row.querySelector("[data-remove-row]");
+          if (!remove) return;
+          remove.disabled = rows.length <= 1;
+        });
+      }
+
+      function addRow() {
+        var node = tpl.content.firstElementChild.cloneNode(true);
+        var parent = node.querySelector("[data-parent]");
+        var child = node.querySelector("[data-child]");
+        var remove = node.querySelector("[data-remove-row]");
+        fillParents(parent);
+        parent.addEventListener("change", function () {
+          fillChildren(child, parent.value || "");
+        });
+        remove.addEventListener("click", function () {
+          node.remove();
+          updateRemoveButtons();
+        });
+        rowsWrap.appendChild(node);
+        updateRemoveButtons();
+      }
+
+      addBtn.addEventListener("click", addRow);
+      addRow();
+    })();
+  </script>
+{% endblock %}
