@@ -341,6 +341,27 @@
   {% endif %}
 
   {% if tab == "working_zones" %}
+    {% if can_manage_working_zone %}
+      <div class="card">
+        <h4>Добавить рабочую зону</h4>
+        <p class="muted">Тип ресурса должен относиться к «Мойка» или «Зона ремонта».</p>
+        <form method="post" action="/service_centers/{{ uid }}/working_zones/create">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <label>Тип ресурса
+            <select name="resource_type_uid" required style="min-width: 320px; max-width: 100%;">
+              <option value="">— выберите тип ресурса —</option>
+              {% for rt in working_zone_resource_options %}
+                <option value="{{ rt.uid }}">{{ rt.label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label style="margin-left: 12px;">Описание
+            <input type="text" name="description" placeholder="опционально" style="width: 320px; max-width: 100%;" />
+          </label>
+          <button type="submit" style="margin-left: 12px;">Создать</button>
+        </form>
+      </div>
+    {% endif %}
     <div class="card">
       <h3>Рабочие зоны сервисного центра</h3>
       {% if not working_zone_items %}
@@ -357,7 +378,9 @@
                 <tr>
                   <th class="col-num">№</th>
                   <th>Тип ресурса</th>
+                  <th>Описание</th>
                   <th>Доступна</th>
+                  {% if can_manage_working_zone %}<th>Действия</th>{% endif %}
                 </tr>
               </thead>
               <tbody>
@@ -365,6 +388,7 @@
                   <tr>
                     <td class="col-num">{{ loop.index }}</td>
                     <td>{{ row.resource_type_label or row.resource_type or "—" }}</td>
+                    <td>{{ row.description or "—" }}</td>
                     <td>
                       {% if row.is_available == true or row.is_available == 1 %}
                         <span class="badge-del no">Да</span>
@@ -374,6 +398,18 @@
                         {{ row.is_available if row.is_available is not none else "—" }}
                       {% endif %}
                     </td>
+                    {% if can_manage_working_zone %}
+                      <td>
+                        {% if row.uid %}
+                          <form method="post" action="/service_centers/{{ uid }}/working_zones/{{ row.uid }}/delete" style="display:inline;" onsubmit="return confirm('Отключить рабочую зону?');">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                            <button type="submit" class="btn-secondary">Удалить</button>
+                          </form>
+                        {% else %}
+                          <span class="muted">—</span>
+                        {% endif %}
+                      </td>
+                    {% endif %}
                   </tr>
                 {% endfor %}
               </tbody>
@@ -445,6 +481,26 @@
   {% endif %}
 
   {% if tab == "equipment" %}
+    {% if can_manage_equipment %}
+      <div class="card">
+        <h4>Добавить оборудование</h4>
+        <form method="post" action="/service_centers/{{ uid }}/equipment/create">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <label>Тип ресурса
+            <select name="resource_type_uid" required style="min-width: 340px; max-width: 100%;">
+              <option value="">— выберите тип ресурса —</option>
+              {% for rt in equipment_resource_options %}
+                <option value="{{ rt.uid }}">{{ rt.label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label style="margin-left: 12px;">Название
+            <input type="text" name="name" placeholder="опционально" style="width: 260px; max-width: 100%;" />
+          </label>
+          <button type="submit" style="margin-left: 12px;">Создать</button>
+        </form>
+      </div>
+    {% endif %}
     <div class="card">
       <h3>Оборудование</h3>
       {% if not equipment_items %}
@@ -463,7 +519,8 @@
               <th>Название</th>
               <th>Тип ресурса</th>
               <th>Доступно</th>
-              {% if can_mutate_sc %}<th>Изменить</th>{% endif %}
+                {% if can_mutate_sc %}<th>Изменить</th>{% endif %}
+                {% if can_manage_equipment %}<th>Удалить</th>{% endif %}
             </tr>
           </thead>
           <tbody>
@@ -487,6 +544,16 @@
                     </form>
                   </td>
                 {% elif can_mutate_sc %}
+                  <td></td>
+                {% endif %}
+                {% if can_manage_equipment and item.uid %}
+                  <td>
+                    <form method="post" action="/service_centers/{{ uid }}/equipment/{{ item.uid }}/delete" style="display:inline;" onsubmit="return confirm('Отключить оборудование?');">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                      <button type="submit" class="btn-secondary">Удалить</button>
+                    </form>
+                  </td>
+                {% elif can_manage_equipment %}
                   <td></td>
                 {% endif %}
               </tr>
@@ -570,7 +637,7 @@
               <th>Тип</th>
               <th>Начало</th>
               <th>Конец</th>
-              {% if can_mutate_sc %}<th></th>{% endif %}
+              {% if can_manage_day_off %}<th></th>{% endif %}
             </tr>
           </thead>
           <tbody>
@@ -580,14 +647,14 @@
                 <td>{{ row.off_type or "-" }}</td>
                 <td>{{ row.start_datetime or "-" }}</td>
                 <td>{{ row.end_datetime or "-" }}</td>
-                {% if can_mutate_sc and row.uid %}
+                {% if can_manage_day_off and row.uid %}
                   <td>
                     <form method="post" action="/service_centers/{{ uid }}/day_off/{{ row.uid }}/delete" style="display:inline;" onsubmit="return confirm('Удалить выходной?');">
                       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                       <button type="submit">Удалить</button>
                     </form>
                   </td>
-                {% elif can_mutate_sc %}
+                {% elif can_manage_day_off %}
                   <td></td>
                 {% endif %}
               </tr>
@@ -599,7 +666,7 @@
       {% endif %}
     </div>
 
-    {% if can_mutate_sc %}
+    {% if can_manage_day_off %}
       <div class="card">
         <h4>Добавить выходной период</h4>
         <p class="muted">Формат даты для API: <code>YYYY-MM-DD HH:MM</code> (поля ниже — локальное время браузера).</p>

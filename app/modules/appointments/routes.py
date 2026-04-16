@@ -1,3 +1,5 @@
+from datetime import date, timedelta
+
 from flask import Blueprint, redirect, render_template, request, url_for
 
 from app.list_limits import RMS_LIST_PAGE_LIMIT
@@ -17,6 +19,30 @@ def list_page():
     date_to = (request.args.get("date_to") or "").strip()
     status = (request.args.get("status") or "").strip()
     cursor = (request.args.get("cursor") or "").strip()
+    has_filters = bool(sc_uid or date_from or date_to or status or cursor)
+
+    client = RMSClient()
+    sc_options = fetch_service_center_options(client)
+    selected_sc_label = (label_for_sc_uid(sc_options, sc_uid) or sc_uid) if sc_uid else ""
+
+    if not has_filters:
+        return render_template(
+            "appointments/list.html",
+            items=[],
+            filters={"sc_uid": sc_uid, "date_from": date_from, "date_to": date_to, "status": status},
+            page={"next_cursor": "", "has_more": False},
+            status_options=["", "active", "cancelled", "completed"],
+            sc_options=sc_options,
+            selected_sc_label=selected_sc_label,
+            error=None,
+        )
+
+    # На проде запрос без периода может быть слишком тяжелым и упираться в timeout.
+    # Если период не задан вручную, используем безопасное окно по умолчанию.
+    if not date_from and not date_to:
+        today = date.today()
+        date_from = today.isoformat()
+        date_to = (today + timedelta(days=14)).isoformat()
 
     params = {"limit": RMS_LIST_PAGE_LIMIT}
     if sc_uid:
@@ -30,9 +56,6 @@ def list_page():
     if cursor:
         params["cursor"] = cursor
 
-    client = RMSClient()
-    sc_options = fetch_service_center_options(client)
-    selected_sc_label = (label_for_sc_uid(sc_options, sc_uid) or sc_uid) if sc_uid else ""
     response = client.get("/api/v1/appointment/service_center/appointments", params=params)
     if not response.ok:
         return render_template(

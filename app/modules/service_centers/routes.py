@@ -89,6 +89,92 @@ def _fetch_resource_type_labels(client: RMSClient) -> Dict[str, str]:
     return labels
 
 
+def _fetch_working_zone_resource_options(client: RMSClient) -> List[Dict[str, str]]:
+    items: List[Dict[str, str]] = []
+    cursor: Optional[str] = None
+    allowed_parents = {"мойка", "зона ремонта"}
+    while len(items) < RESOURCE_TYPE_OPTIONS_MAX:
+        chunk_limit = min(RMS_LIST_PAGE_LIMIT, RESOURCE_TYPE_OPTIONS_MAX - len(items))
+        params: Dict[str, Any] = {"limit": chunk_limit}
+        if cursor:
+            params["cursor"] = cursor
+        resp = client.get("/api/v1/resource_type", params=params)
+        if not resp.ok:
+            break
+        payload = resp.data if isinstance(resp.data, dict) else {}
+        data = payload.get("data")
+        chunk = data if isinstance(data, list) else []
+        for row in chunk:
+            if not isinstance(row, dict):
+                continue
+            uid = str(row.get("uid") or "").strip()
+            if not uid:
+                continue
+            parent = str(row.get("parent_resource_type") or "").strip()
+            if parent.casefold() not in allowed_parents:
+                continue
+            child = str(row.get("children_resource_type") or "").strip()
+            label = f"{child} ({parent})" if child and parent else (child or parent or uid)
+            items.append({"uid": uid, "label": label})
+        if not bool(payload.get("has_more")):
+            break
+        nxt = str(payload.get("cursor") or "").strip()
+        if not nxt:
+            break
+        cursor = nxt
+    uniq: Dict[str, Dict[str, str]] = {}
+    for row in items:
+        uid = row.get("uid") or ""
+        if uid and uid not in uniq:
+            uniq[uid] = row
+    out = list(uniq.values())
+    out.sort(key=lambda x: str(x.get("label") or "").casefold())
+    return out
+
+
+def _fetch_equipment_resource_options(client: RMSClient) -> List[Dict[str, str]]:
+    items: List[Dict[str, str]] = []
+    cursor: Optional[str] = None
+    allowed_parents = {"оборудование", "диагностическое оборудование", "внешнее оборудование"}
+    while len(items) < RESOURCE_TYPE_OPTIONS_MAX:
+        chunk_limit = min(RMS_LIST_PAGE_LIMIT, RESOURCE_TYPE_OPTIONS_MAX - len(items))
+        params: Dict[str, Any] = {"limit": chunk_limit}
+        if cursor:
+            params["cursor"] = cursor
+        resp = client.get("/api/v1/resource_type", params=params)
+        if not resp.ok:
+            break
+        payload = resp.data if isinstance(resp.data, dict) else {}
+        data = payload.get("data")
+        chunk = data if isinstance(data, list) else []
+        for row in chunk:
+            if not isinstance(row, dict):
+                continue
+            uid = str(row.get("uid") or "").strip()
+            if not uid:
+                continue
+            parent = str(row.get("parent_resource_type") or "").strip()
+            if parent.casefold() not in allowed_parents:
+                continue
+            child = str(row.get("children_resource_type") or "").strip()
+            label = f"{child} ({parent})" if child and parent else (child or parent or uid)
+            items.append({"uid": uid, "label": label})
+        if not bool(payload.get("has_more")):
+            break
+        nxt = str(payload.get("cursor") or "").strip()
+        if not nxt:
+            break
+        cursor = nxt
+    uniq: Dict[str, Dict[str, str]] = {}
+    for row in items:
+        uid = row.get("uid") or ""
+        if uid and uid not in uniq:
+            uniq[uid] = row
+    out = list(uniq.values())
+    out.sort(key=lambda x: str(x.get("label") or "").casefold())
+    return out
+
+
 @bp.get("")
 @require_permission("service_center.read")
 def list_page():
@@ -293,6 +379,10 @@ def detail_page(uid: str):
     equipment_items = _extract_list(
         equipment_resp.data, ["service_centers", "equipment", "items"]
     )
+    can_manage_equipment = has_permission("service_center.update") or has_permission("service_center.read")
+    equipment_resource_options: List[Dict[str, str]] = (
+        _fetch_equipment_resource_options(client) if can_manage_equipment else []
+    )
     equipment_rt_labels = _fetch_resource_type_labels(client) if isinstance(equipment_items, list) and equipment_items else {}
     for row in equipment_items if isinstance(equipment_items, list) else []:
         if not isinstance(row, dict):
@@ -386,6 +476,12 @@ def detail_page(uid: str):
             working_zone_items = []
         else:
             working_zones_error = wz_resp.error
+    can_manage_working_zone = has_permission("service_center.update") or has_permission(
+        "service_center.read"
+    )
+    working_zone_resource_options: List[Dict[str, str]] = (
+        _fetch_working_zone_resource_options(client) if can_manage_working_zone else []
+    )
 
     provider_rows: List[Dict[str, Any]] = []
     provider_err: Optional[str] = None
@@ -486,6 +582,7 @@ def detail_page(uid: str):
     ]
 
     can_mutate_franchise = has_permission("service_center.update") or has_permission("franchisee.update")
+    can_manage_day_off = has_permission("service_center.update") or has_permission("service_center.read")
     franchisee_options: List[Dict[str, str]] = []
     if sc_resp.ok and can_mutate_franchise and has_permission("franchisee.read"):
         franchisee_options = _fetch_franchisee_select_options(client)
@@ -498,6 +595,8 @@ def detail_page(uid: str):
         schedule_items=schedule_items,
         employee_items=employee_items,
         equipment_items=equipment_items,
+        can_manage_equipment=can_manage_equipment,
+        equipment_resource_options=equipment_resource_options,
         day_off_items=day_off_items,
         slot_items=slot_items,
         slots_need_params=slots_need_params,
@@ -509,6 +608,7 @@ def detail_page(uid: str):
         sc_msg=request.args.get("sc_msg"),
         sc_msg_type=request.args.get("sc_msg_type") or "info",
         can_mutate_sc=has_permission("service_center.update"),
+        can_manage_day_off=can_manage_day_off,
         can_mutate_franchise=can_mutate_franchise,
         franchisee_options=franchisee_options,
         can_read_department=can_read_department,
@@ -521,8 +621,10 @@ def detail_page(uid: str):
         can_delete_department=has_permission("department.delete"),
         department_items=department_items,
         can_read_working_zone=can_read_working_zone,
+        can_manage_working_zone=can_manage_working_zone,
         working_zone_items=working_zone_items if isinstance(working_zone_items, list) else [],
         working_zones_page=working_zones_page,
+        working_zone_resource_options=working_zone_resource_options,
         provider_rows=provider_rows,
         provider_codes=PROVIDER_CODES,
         can_read_warehouse=can_read_warehouse,
@@ -636,7 +738,7 @@ def schedule_delete(uid: str):
 
 
 @bp.post("/<uid>/day_off/create")
-@require_permission("service_center.update")
+@require_any_permission("service_center.update", "service_center.read")
 def day_off_create(uid: str):
     start_raw = (request.form.get("start_datetime") or "").strip()
     end_raw = (request.form.get("end_datetime") or "").strip()
@@ -656,13 +758,46 @@ def day_off_create(uid: str):
 
 
 @bp.post("/<uid>/day_off/<off_day_uid>/delete")
-@require_permission("service_center.update")
+@require_any_permission("service_center.update", "service_center.read")
 def day_off_delete(uid: str, off_day_uid: str):
     client = RMSClient()
     resp = client.delete(f"/api/v1/service_center/{uid}/day_off/{off_day_uid}")
     if resp.ok:
         return redirect(_redirect_detail(uid, "day_offs", "Выходной период удален", "success"))
     return redirect(_redirect_detail(uid, "day_offs", resp.error or "Ошибка удаления", "error"))
+
+
+@bp.post("/<uid>/working_zones/create")
+@require_any_permission("service_center.update", "service_center.read")
+def working_zone_create(uid: str):
+    resource_type_uid = (request.form.get("resource_type_uid") or "").strip()
+    description = (request.form.get("description") or "").strip()
+    if not resource_type_uid:
+        return redirect(_redirect_detail(uid, "working_zones", "Выберите тип ресурса рабочей зоны", "error"))
+    body: Dict[str, Any] = {"resource_type_uid": resource_type_uid}
+    if description:
+        body["description"] = description
+    client = RMSClient()
+    resp = client.post(f"/api/v1/service_center/{uid}/working_zone", json=body)
+    if resp.ok:
+        return redirect(_redirect_detail(uid, "working_zones", "Рабочая зона создана", "success"))
+    return redirect(_redirect_detail(uid, "working_zones", resp.error or "Ошибка создания рабочей зоны", "error"))
+
+
+@bp.post("/<uid>/working_zones/<wz_uid>/delete")
+@require_any_permission("service_center.update", "service_center.read")
+def working_zone_delete(uid: str, wz_uid: str):
+    client = RMSClient()
+    resp = client.patch(
+        f"/api/v1/service_center/{uid}/working_zone/{wz_uid}",
+        json={"is_available": False},
+    )
+    if resp.ok:
+        return redirect(_redirect_detail(uid, "working_zones", "Рабочая зона отключена", "success"))
+    err = (resp.error or "").lower()
+    if resp.status_code == 409 and ("соответствует" in err or "already" in err):
+        return redirect(_redirect_detail(uid, "working_zones", "Рабочая зона уже отключена", "info"))
+    return redirect(_redirect_detail(uid, "working_zones", resp.error or "Ошибка удаления рабочей зоны", "error"))
 
 
 def _extract_slots_payload(payload: Any) -> list:
@@ -879,3 +1014,40 @@ def equipment_patch(uid: str, eq_uid: str):
     if resp.ok:
         return redirect(_redirect_detail(uid, "equipment", "Оборудование обновлено", "success"))
     return redirect(_redirect_detail(uid, "equipment", resp.error or "Ошибка обновления", "error"))
+
+
+@bp.post("/<uid>/equipment/create")
+@require_any_permission("service_center.update", "service_center.read")
+def equipment_create(uid: str):
+    resource_type_uid = (request.form.get("resource_type_uid") or "").strip()
+    name = (request.form.get("name") or "").strip()
+    if not resource_type_uid:
+        return redirect(_redirect_detail(uid, "equipment", "Выберите тип ресурса оборудования", "error"))
+    body: Dict[str, Any] = {
+        "service_center_uid": uid,
+        "resource_type_uid": resource_type_uid,
+        "is_external": False,
+    }
+    if name:
+        body["name"] = name
+    client = RMSClient()
+    resp = client.post("/api/v2/service_center/equipment", json=body)
+    if resp.ok:
+        return redirect(_redirect_detail(uid, "equipment", "Оборудование создано", "success"))
+    return redirect(_redirect_detail(uid, "equipment", resp.error or "Ошибка создания оборудования", "error"))
+
+
+@bp.post("/<uid>/equipment/<eq_uid>/delete")
+@require_any_permission("service_center.update", "service_center.read")
+def equipment_delete(uid: str, eq_uid: str):
+    client = RMSClient()
+    resp = client.patch(
+        f"/api/v1/service_center/{uid}/equipment/{eq_uid}",
+        json={"is_available": False},
+    )
+    if resp.ok:
+        return redirect(_redirect_detail(uid, "equipment", "Оборудование отключено", "success"))
+    err = (resp.error or "").lower()
+    if resp.status_code == 409 and ("соответствует" in err or "already" in err):
+        return redirect(_redirect_detail(uid, "equipment", "Оборудование уже отключено", "info"))
+    return redirect(_redirect_detail(uid, "equipment", resp.error or "Ошибка удаления оборудования", "error"))
