@@ -5,6 +5,7 @@ from app.config import Config
 from app.extensions import csrf
 from app.rms_errors import error_suggests_token_refresh
 from app.modules.appointments.routes import bp as appointments_bp
+from app.modules.analytics.routes import bp as analytics_bp
 from app.modules.dashboard.routes import bp as dashboard_bp
 from app.modules.departments.routes import bp as departments_bp
 from app.modules.dictionaries.routes import bp as dictionaries_bp
@@ -27,6 +28,7 @@ def create_app() -> Flask:
     app.register_blueprint(service_centers_bp)
     app.register_blueprint(departments_bp)
     app.register_blueprint(appointments_bp)
+    app.register_blueprint(analytics_bp)
     app.register_blueprint(dictionaries_bp)
     app.register_blueprint(warehouses_bp)
 

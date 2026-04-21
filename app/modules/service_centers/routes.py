@@ -175,6 +175,49 @@ def _fetch_equipment_resource_options(client: RMSClient) -> List[Dict[str, str]]
     return out
 
 
+def _fetch_employee_resource_options(client: RMSClient, external: bool = False) -> List[Dict[str, str]]:
+    items: List[Dict[str, str]] = []
+    cursor: Optional[str] = None
+    allowed_parents = {"внешний сотрудник"} if external else {"сотрудник"}
+    while len(items) < RESOURCE_TYPE_OPTIONS_MAX:
+        chunk_limit = min(RMS_LIST_PAGE_LIMIT, RESOURCE_TYPE_OPTIONS_MAX - len(items))
+        params: Dict[str, Any] = {"limit": chunk_limit}
+        if cursor:
+            params["cursor"] = cursor
+        resp = client.get("/api/v1/resource_type", params=params)
+        if not resp.ok:
+            break
+        payload = resp.data if isinstance(resp.data, dict) else {}
+        data = payload.get("data")
+        chunk = data if isinstance(data, list) else []
+        for row in chunk:
+            if not isinstance(row, dict):
+                continue
+            uid = str(row.get("uid") or "").strip()
+            if not uid:
+                continue
+            parent = str(row.get("parent_resource_type") or "").strip()
+            if parent.casefold() not in allowed_parents:
+                continue
+            child = str(row.get("children_resource_type") or "").strip()
+            label = f"{child} ({parent})" if child and parent else (child or parent or uid)
+            items.append({"uid": uid, "label": label})
+        if not bool(payload.get("has_more")):
+            break
+        nxt = str(payload.get("cursor") or "").strip()
+        if not nxt:
+            break
+        cursor = nxt
+    uniq: Dict[str, Dict[str, str]] = {}
+    for row in items:
+        uid = row.get("uid") or ""
+        if uid and uid not in uniq:
+            uniq[uid] = row
+    out = list(uniq.values())
+    out.sort(key=lambda x: str(x.get("label") or "").casefold())
+    return out
+
+
 @bp.get("")
 @require_permission("service_center.read")
 def list_page():
@@ -326,11 +369,17 @@ def detail_page(uid: str):
 
     sc_data = _extract_object(sc_resp.data)
     schedule_items = sc_data.get("schedule") if isinstance(sc_data.get("schedule"), list) else []
-    employee_items = _extract_list(
+    all_employee_items = _extract_list(
         employees_resp.data, ["service_centers", "employees", "resources", "items"]
     )
-    employee_rt_labels = _fetch_resource_type_labels(client) if isinstance(employee_items, list) and employee_items else {}
-    for row in employee_items if isinstance(employee_items, list) else []:
+    employee_items: List[Dict[str, Any]] = []
+    external_employee_items: List[Dict[str, Any]] = []
+    employee_rt_labels = (
+        _fetch_resource_type_labels(client)
+        if isinstance(all_employee_items, list) and all_employee_items
+        else {}
+    )
+    for row in all_employee_items if isinstance(all_employee_items, list) else []:
         if not isinstance(row, dict):
             continue
         rt_list = row.get("resource_types")
@@ -376,12 +425,23 @@ def detail_page(uid: str):
         rt_uid = str(row.get("resource_type_uid") or row.get("resource_uid") or "").strip()
         if rt_uid:
             row["resource_type_label"] = employee_rt_labels.get(rt_uid, rt_uid)
+        if bool(row.get("is_external")):
+            external_employee_items.append(row)
+        else:
+            employee_items.append(row)
     equipment_items = _extract_list(
         equipment_resp.data, ["service_centers", "equipment", "items"]
     )
     can_manage_equipment = has_permission("service_center.update") or has_permission("service_center.read")
+    can_manage_external_employee = has_permission("service_center.update")
     equipment_resource_options: List[Dict[str, str]] = (
         _fetch_equipment_resource_options(client) if can_manage_equipment else []
+    )
+    employee_resource_options: List[Dict[str, str]] = (
+        _fetch_employee_resource_options(client, external=False) if has_permission("service_center.update") else []
+    )
+    external_employee_resource_options: List[Dict[str, str]] = (
+        _fetch_employee_resource_options(client, external=True) if can_manage_external_employee else []
     )
     equipment_rt_labels = _fetch_resource_type_labels(client) if isinstance(equipment_items, list) and equipment_items else {}
     for row in equipment_items if isinstance(equipment_items, list) else []:
@@ -596,6 +656,10 @@ def detail_page(uid: str):
         employee_items=employee_items,
         equipment_items=equipment_items,
         can_manage_equipment=can_manage_equipment,
+        can_manage_external_employee=can_manage_external_employee,
+        employee_resource_options=employee_resource_options,
+        external_employee_resource_options=external_employee_resource_options,
+        external_employee_items=external_employee_items,
         equipment_resource_options=equipment_resource_options,
         day_off_items=day_off_items,
         slot_items=slot_items,
@@ -995,6 +1059,90 @@ def employee_create(uid: str):
     if resp.ok:
         return redirect(_redirect_detail(uid, "employees", "Сотрудник добавлен", "success"))
     return redirect(_redirect_detail(uid, "employees", resp.error or "Ошибка добавления сотрудника", "error"))
+
+
+@bp.post("/<uid>/external_employee/create")
+@require_permission("service_center.update")
+def external_employee_create(uid: str):
+    sso_id = (request.form.get("sso_id") or "").strip()
+    resource_type_uid = (request.form.get("resource_type_uid") or "").strip()
+    contract_due_date = (request.form.get("contract_due_date") or "").strip()
+    if not sso_id or not resource_type_uid:
+        return redirect(
+            _redirect_detail(
+                uid,
+                "external_employees",
+                "Укажите SSO ID и resource_type_uid для внешнего сотрудника",
+                "error",
+            )
+        )
+    body: Dict[str, Any] = {
+        "sso_id": sso_id,
+        "resource_type_uid": resource_type_uid,
+        "is_external": True,
+    }
+    if contract_due_date:
+        body["contract_due_date"] = contract_due_date
+    client = RMSClient()
+    resp = client.post(f"/api/v2/service_center/{uid}/employee", json=body)
+    if resp.ok:
+        return redirect(_redirect_detail(uid, "external_employees", "Внешний сотрудник добавлен", "success"))
+    return redirect(
+        _redirect_detail(uid, "external_employees", resp.error or "Ошибка добавления внешнего сотрудника", "error")
+    )
+
+
+@bp.post("/<uid>/external_employee/<employee_uid>/patch")
+@require_permission("service_center.update")
+def external_employee_patch(uid: str, employee_uid: str):
+    resource_type_uid = (request.form.get("resource_type_uid") or "").strip()
+    contract_due_date = (request.form.get("contract_due_date") or "").strip()
+    body: Dict[str, Any] = {}
+    if resource_type_uid:
+        body["resource_type_uid"] = resource_type_uid
+    if contract_due_date:
+        body["contract_due_date"] = contract_due_date
+    if not body:
+        return redirect(
+            _redirect_detail(
+                uid,
+                "external_employees",
+                "Укажите хотя бы одно поле для обновления внешнего сотрудника",
+                "error",
+            )
+        )
+    client = RMSClient()
+    resp = client.patch(f"/api/v1/service_center/{uid}/employee/{employee_uid}", json=body)
+    if not resp.ok:
+        resp = client.patch(f"/api/v2/service_center/{uid}/employee/{employee_uid}", json=body)
+    if resp.ok:
+        return redirect(_redirect_detail(uid, "external_employees", "Внешний сотрудник обновлён", "success"))
+    return redirect(
+        _redirect_detail(uid, "external_employees", resp.error or "Ошибка обновления внешнего сотрудника", "error")
+    )
+
+
+@bp.post("/<uid>/external_employee/<employee_uid>/disable")
+@require_permission("service_center.update")
+def external_employee_disable(uid: str, employee_uid: str):
+    client = RMSClient()
+    resp = client.patch(
+        f"/api/v1/service_center/{uid}/employee/{employee_uid}",
+        json={"is_available": False},
+    )
+    if not resp.ok:
+        resp = client.patch(
+            f"/api/v2/service_center/{uid}/employee/{employee_uid}",
+            json={"is_available": False},
+        )
+    if resp.ok:
+        return redirect(_redirect_detail(uid, "external_employees", "Внешний сотрудник отключён", "success"))
+    err = (resp.error or "").lower()
+    if resp.status_code == 409 and ("соответствует" in err or "already" in err):
+        return redirect(_redirect_detail(uid, "external_employees", "Внешний сотрудник уже отключён", "info"))
+    return redirect(
+        _redirect_detail(uid, "external_employees", resp.error or "Ошибка отключения внешнего сотрудника", "error")
+    )
 
 
 @bp.post("/<uid>/equipment/<eq_uid>/patch")

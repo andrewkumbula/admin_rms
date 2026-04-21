@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="data-page">
+    <p class="toolbar"><a class="back-link" href="/dictionaries">← Справочники</a></p>
+    <h1>Взаимозаменяемые ресурсы</h1>
+
+    {% if rp_msg %}
+      <div class="alert {% if rp_msg_type == 'error' %}alert-error{% elif rp_msg_type == 'success' %}alert-success{% else %}alert-info{% endif %}">
+        {{ rp_msg }}
+      </div>
+    {% endif %}
+
+    <div class="card">
+      <h3 style="margin-top:0;">Фильтры</h3>
+      <form method="get" action="/dictionaries/replacement_types" class="data-filters">
+        <label>Заменитель (тип ресурса)
+          <select name="replacing_uid" style="min-width: 340px; max-width: 100%;">
+            <option value="">Все</option>
+            {% for rt in rt_options %}
+              <option value="{{ rt.uid }}" {% if selected_replacing_uid == rt.uid %}selected{% endif %}>{{ rt.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Заменяемый (тип ресурса)
+          <select name="replaced_uid" style="min-width: 340px; max-width: 100%;">
+            <option value="">Все</option>
+            {% for rt in rt_options %}
+              <option value="{{ rt.uid }}" {% if selected_replaced_uid == rt.uid %}selected{% endif %}>{{ rt.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Статус
+          <select name="status">
+            <option value="active" {% if selected_status == 'active' %}selected{% endif %}>Только активные</option>
+            <option value="inactive" {% if selected_status == 'inactive' %}selected{% endif %}>Только неактивные</option>
+          </select>
+        </label>
+        <button type="submit">Применить</button>
+        <a class="btn-secondary" href="/dictionaries/replacement_types" style="display:inline-block; text-decoration:none; line-height:1.2;">Сбросить</a>
+      </form>
+    </div>
+
+    {% if can_create %}
+      <div class="card">
+        <h3 style="margin-top:0;">Создать связь взаимозаменяемости</h3>
+        <form method="post" action="/dictionaries/replacement_types/create" class="data-filters">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <label>Заменитель
+            <select name="replacing_resource_type_uid" required style="min-width: 340px; max-width: 100%;">
+              <option value="">— выберите тип ресурса —</option>
+              {% for rt in rt_options %}
+                <option value="{{ rt.uid }}">{{ rt.label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>Заменяемый
+            <select name="replaced_resource_type_uid" required style="min-width: 340px; max-width: 100%;">
+              <option value="">— выберите тип ресурса —</option>
+              {% for rt in rt_options %}
+                <option value="{{ rt.uid }}">{{ rt.label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <button type="submit">Создать</button>
+        </form>
+      </div>
+    {% endif %}
+
+    {% if error %}
+      {% include "includes/rms_inline_error.html" %}
+    {% elif not items %}
+      <div class="card"><p class="muted" style="margin:0;">Связи не найдены.</p></div>
+    {% else %}
+      <div class="card data-table-card" data-table-filter-wrap>
+        <div class="table-filter-bar">
+          <label for="tbl-filter-rp">Поиск в таблице</label>
+          <input type="search" id="tbl-filter-rp" data-table-filter placeholder="Текст по заменителю/заменяемому…" autocomplete="off" />
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th class="col-num">№</th>
+                <th>UID</th>
+                <th>Заменитель</th>
+                <th>Заменяемый</th>
+                <th>Активна</th>
+                {% if can_update %}<th>Статус</th>{% endif %}
+                {% if can_delete %}<th>Деактивировать</th>{% endif %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in items %}
+                {% set rep = row.replacing_resource or {} %}
+                {% set red = row.replaced_resource or {} %}
+                <tr>
+                  <td class="col-num">{{ loop.index }}</td>
+                  <td class="col-mono">{{ row.uid or "-" }}</td>
+                  <td>
+                    {{ rep.children_resource_type or "-" }}
+                    <div class="muted" style="font-size:12px;">{{ rep.parent_resource_type or "-" }} · <span class="col-mono">{{ rep.resource_type_uid or "-" }}</span></div>
+                  </td>
+                  <td>
+                    {{ red.children_resource_type or "-" }}
+                    <div class="muted" style="font-size:12px;">{{ red.parent_resource_type or "-" }} · <span class="col-mono">{{ red.resource_type_uid or "-" }}</span></div>
+                  </td>
+                  <td>{{ row.is_active if row.is_active is not none else "-" }}</td>
+                  {% if can_update and row.uid %}
+                    <td>
+                      <form method="post" action="/dictionaries/replacement_types/{{ row.uid }}/toggle" style="display:flex; gap:8px; align-items:center;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                        <select name="is_active">
+                          <option value="true" {% if row.is_active %}selected{% endif %}>Активна</option>
+                          <option value="false" {% if not row.is_active %}selected{% endif %}>Неактивна</option>
+                        </select>
+                        <button type="submit" class="btn-secondary">Сохранить</button>
+                      </form>
+                    </td>
+                  {% elif can_update %}
+                    <td><span class="muted">—</span></td>
+                  {% endif %}
+                  {% if can_delete and row.uid %}
+                    <td>
+                      <form method="post" action="/dictionaries/replacement_types/{{ row.uid }}/delete" onsubmit="return confirm('Деактивировать связь взаимозаменяемости?');">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                        <button type="submit" class="btn-secondary">Деактивировать</button>
+                      </form>
+                    </td>
+                  {% elif can_delete %}
+                    <td><span class="muted">—</span></td>
+                  {% endif %}
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+{% endblock %}

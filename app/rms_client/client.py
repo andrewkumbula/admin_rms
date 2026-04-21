@@ -64,7 +64,15 @@ class RMSClient:
                 timeout=self.timeout,
                 **kwargs,
             )
-            payload = resp.json() if resp.content else {}
+            payload: Any
+            if resp.content:
+                try:
+                    payload = resp.json()
+                except ValueError:
+                    # Некоторые endpoint-ы RMS в ошибках могут вернуть не-JSON.
+                    payload = {"message": (resp.text or "").strip() or f"HTTP {resp.status_code}"}
+            else:
+                payload = {}
             if resp.ok:
                 return RMSResponse(ok=True, status_code=resp.status_code, data=payload)
             return RMSResponse(

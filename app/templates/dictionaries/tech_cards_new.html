@@ -32,7 +32,7 @@
 
     <div class="card">
       <p class="muted" style="margin-top:0;">
-        <code>POST /api/v1/tech_specification</code>: одна работа + один бренд + несколько типов ресурса.
+        <code>POST /api/v1/tech_specification</code>: одна работа + опциональный бренд + несколько типов ресурса.
       </p>
       <form method="post" action="/dictionaries/tech_cards/create" id="tc-create-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
@@ -49,8 +49,8 @@
 
         <p>
           <label for="brand_uid"><strong>Бренд</strong></label><br />
-          <select id="brand_uid" name="brand_uid" required style="width:100%; max-width:620px;">
-            <option value="">— выберите бренд —</option>
+          <select id="brand_uid" name="brand_uid" style="width:100%; max-width:620px;">
+            <option value="">— без бренда —</option>
             {% for o in brand_options %}
               <option value="{{ o.uid }}">{{ o.label }}</option>
             {% endfor %}

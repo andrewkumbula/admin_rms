@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="data-page">
+    <p class="toolbar"><a class="back-link" href="/dictionaries">← Справочники</a></p>
+    <h1>Внешние сотрудники</h1>
+
+    {% if ee_msg %}
+      <div class="alert {% if ee_msg_type == 'error' %}alert-error{% elif ee_msg_type == 'success' %}alert-success{% else %}alert-info{% endif %}">
+        {{ ee_msg }}
+      </div>
+    {% endif %}
+
+    {% if can_manage %}
+      <div class="card">
+        <h3 style="margin-top:0;">Добавить внешнего сотрудника</h3>
+        <p class="muted">Глобальная сущность, не привязана к СЦ. Минимум полей: SSO ID, тип ресурса, дата контракта.</p>
+        <form method="post" action="/dictionaries/external_employees/create">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <label>SSO ID
+            <input type="text" name="sso_id" required style="width: 280px; max-width: 100%;" />
+          </label>
+          <label style="margin-left: 12px;">Тип ресурса
+            <select name="resource_type_uid" required style="min-width: 320px; max-width: 100%;">
+              <option value="">— выберите тип ресурса —</option>
+              {% for rt in resource_type_options %}
+                <option value="{{ rt.uid }}">{{ rt.label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label style="margin-left: 12px;">Контракт до
+            <input type="date" name="contract_due_date" />
+          </label>
+          <button type="submit" style="margin-left: 12px;">Создать</button>
+        </form>
+      </div>
+    {% endif %}
+
+    {% if error %}
+      {% include "includes/rms_inline_error.html" %}
+    {% elif not items %}
+      <div class="card"><p class="muted" style="margin:0;">Нет внешних сотрудников.</p></div>
+    {% else %}
+      <div class="card data-table-card" data-table-filter-wrap>
+        <div class="table-filter-bar">
+          <label for="tbl-filter-ext-emp">Поиск в таблице</label>
+          <input type="search" id="tbl-filter-ext-emp" data-table-filter placeholder="SSO, имя, тип ресурса…" autocomplete="off" />
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th class="col-num">№</th>
+                <th>UID</th>
+                <th>SSO ID</th>
+                <th>Имя</th>
+                <th>Тип ресурса</th>
+                <th>Доступен</th>
+                <th>Контракт до</th>
+                {% if can_manage %}<th>Изменить</th>{% endif %}
+                {% if can_manage %}<th>Отключить</th>{% endif %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in items %}
+                <tr>
+                  <td class="col-num">{{ loop.index }}</td>
+                  <td class="col-mono">{{ row.uid or "-" }}</td>
+                  <td class="col-mono">{{ row.sso_id or "-" }}</td>
+                  <td>{{ row.name or row.full_name or "-" }}</td>
+                  <td>{{ row.resource_type or row.children_resource_type or row.resource_type_uid or "-" }}</td>
+                  <td>{{ row.is_available if row.is_available is not none else "-" }}</td>
+                  <td>{{ row.contract_due_date or "-" }}</td>
+                  {% if can_manage %}
+                    <td>
+                      {% if row.uid %}
+                        <form method="post" action="/dictionaries/external_employees/{{ row.uid }}/patch" style="display:flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+                          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                          <select name="resource_type_uid" style="min-width: 210px;">
+                            <option value="">тип ресурса —</option>
+                            {% for rt in resource_type_options %}
+                              <option value="{{ rt.uid }}">{{ rt.label }}</option>
+                            {% endfor %}
+                          </select>
+                          <input type="date" name="contract_due_date" />
+                          <button type="submit" class="btn-secondary">Сохранить</button>
+                        </form>
+                      {% else %}
+                        <span class="muted">—</span>
+                      {% endif %}
+                    </td>
+                    <td>
+                      {% if row.uid %}
+                        <form method="post" action="/dictionaries/external_employees/{{ row.uid }}/disable" onsubmit="return confirm('Отключить внешнего сотрудника?');">
+                          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                          <button type="submit" class="btn-secondary">Отключить</button>
+                        </form>
+                      {% else %}
+                        <span class="muted">—</span>
+                      {% endif %}
+                    </td>
+                  {% endif %}
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+{% endblock %}

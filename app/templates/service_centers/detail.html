@@ -472,7 +472,105 @@
         <form method="post" action="/service_centers/{{ uid }}/employee/create">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
           <label>SSO ID <input type="text" name="sso_id" required style="width: 280px; max-width: 100%;" /></label>
-          <label style="margin-left: 12px;">Resource type UID <input type="text" name="resource_type_uid" required style="width: 280px; max-width: 100%;" /></label>
+          <label style="margin-left: 12px;">Тип ресурса
+            <select name="resource_type_uid" required style="min-width: 340px; max-width: 100%;">
+              <option value="">— выберите тип ресурса —</option>
+              {% for rt in employee_resource_options %}
+                <option value="{{ rt.uid }}">{{ rt.label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label style="margin-left: 12px;">Контракт до <input type="date" name="contract_due_date" /></label>
+          <button type="submit" style="margin-left: 12px;">Создать</button>
+        </form>
+      </div>
+    {% endif %}
+  {% endif %}
+
+  {% if tab == "external_employees" %}
+    <div class="card">
+      <h3>Внешние сотрудники</h3>
+      {% if not external_employee_items %}
+        <p class="muted">Нет данных</p>
+      {% else %}
+        <div data-table-filter-wrap>
+        <div class="table-filter-bar">
+          <label for="tbl-filter-sc-ext-emp">Поиск в таблице</label>
+          <input type="search" id="tbl-filter-sc-ext-emp" data-table-filter placeholder="Текст по внешним сотрудникам…" autocomplete="off" />
+        </div>
+        <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th class="col-num">№</th>
+              <th>SSO ID</th>
+              <th>Имя</th>
+              <th>Тип ресурса</th>
+              <th>Доступен</th>
+              <th>Контракт до</th>
+              {% if can_manage_external_employee %}<th>Изменить</th>{% endif %}
+              {% if can_manage_external_employee %}<th>Отключить</th>{% endif %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in external_employee_items %}
+              <tr>
+                <td class="col-num">{{ loop.index }}</td>
+                <td class="col-mono">{{ item.sso_id or item.uid or "-" }}</td>
+                <td>{{ item.name or item.full_name or "-" }}</td>
+                <td>{{ item.resource_type_label or item.resource_type or "-" }}</td>
+                <td>{{ item.is_available if item.is_available is not none else "-" }}</td>
+                <td>{{ item.contract_due_date or "-" }}</td>
+                {% if can_manage_external_employee and item.uid %}
+                  <td>
+                    <form method="post" action="/service_centers/{{ uid }}/external_employee/{{ item.uid }}/patch" style="display:flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                      <select name="resource_type_uid" style="min-width: 210px;">
+                        <option value="">тип ресурса —</option>
+                        {% for rt in external_employee_resource_options %}
+                          <option value="{{ rt.uid }}">{{ rt.label }}</option>
+                        {% endfor %}
+                      </select>
+                      <input type="date" name="contract_due_date" />
+                      <button type="submit" class="btn-secondary">Сохранить</button>
+                    </form>
+                  </td>
+                {% elif can_manage_external_employee %}
+                  <td><span class="muted">—</span></td>
+                {% endif %}
+                {% if can_manage_external_employee and item.uid %}
+                  <td>
+                    <form method="post" action="/service_centers/{{ uid }}/external_employee/{{ item.uid }}/disable" onsubmit="return confirm('Отключить внешнего сотрудника?');">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                      <button type="submit" class="btn-secondary">Отключить</button>
+                    </form>
+                  </td>
+                {% elif can_manage_external_employee %}
+                  <td><span class="muted">—</span></td>
+                {% endif %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+        </div>
+      {% endif %}
+    </div>
+    {% if can_manage_external_employee %}
+      <div class="card">
+        <h4>Добавить внешнего сотрудника</h4>
+        <p class="muted">API: <code>POST /api/v2/service_center/{uid}/employee</code> c флагом <code>is_external=true</code>.</p>
+        <form method="post" action="/service_centers/{{ uid }}/external_employee/create">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <label>SSO ID <input type="text" name="sso_id" required style="width: 280px; max-width: 100%;" /></label>
+          <label style="margin-left: 12px;">Тип ресурса
+            <select name="resource_type_uid" required style="min-width: 340px; max-width: 100%;">
+              <option value="">— выберите тип ресурса —</option>
+              {% for rt in external_employee_resource_options %}
+                <option value="{{ rt.uid }}">{{ rt.label }}</option>
+              {% endfor %}
+            </select>
+          </label>
           <label style="margin-left: 12px;">Контракт до <input type="date" name="contract_due_date" /></label>
           <button type="submit" style="margin-left: 12px;">Создать</button>
         </form>

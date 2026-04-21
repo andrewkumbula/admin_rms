@@ -55,6 +55,14 @@
       align-items: center;
       margin-top: 8px;
     }
+    .btn-danger {
+      background: #fee2e2;
+      border: 1px solid #fecaca;
+      color: #991b1b;
+    }
+    .btn-danger:hover {
+      background: #fecaca;
+    }
   </style>
 {% endblock %}
 {% block content %}
@@ -144,7 +152,7 @@
                 <th class="col-num">№</th>
                 <th>Название работы</th>
                 <th>Бренд</th>
-                <th>Детали</th>
+                <th>Действия</th>
               </tr>
             </thead>
             <tbody>
@@ -161,6 +169,22 @@
                       <a
                         href="{{ url_for('dictionaries.tech_card_detail') }}?work_uid={{ row.work_uid|urlencode }}&amp;brand_uid={{ row.brand_uid|urlencode }}{% if selected_brand_uid %}&amp;ret_brand_uid={{ selected_brand_uid|urlencode }}{% endif %}{% if selected_work_uid %}&amp;ret_work_uid={{ selected_work_uid|urlencode }}{% endif %}{% if request.args.get('cursor') %}&amp;ret_cursor={{ request.args.get('cursor')|urlencode }}{% endif %}"
                         >Подробнее</a>
+                      <form
+                        method="post"
+                        action="{{ url_for('dictionaries.tech_cards_delete') }}"
+                        style="display:inline-block; margin-left:10px;"
+                        data-work-name="{{ (row.work_name or row.name or '—')|e }}"
+                        data-brand-name="{{ (row.brand_name or '—')|e }}"
+                        onsubmit="return confirmTechCardDelete(this);"
+                      >
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                        <input type="hidden" name="work_uid" value="{{ row.work_uid }}" />
+                        <input type="hidden" name="brand_uid" value="{{ row.brand_uid }}" />
+                        <input type="hidden" name="ret_brand_uid" value="{{ selected_brand_uid }}" />
+                        <input type="hidden" name="ret_work_uid" value="{{ selected_work_uid }}" />
+                        <input type="hidden" name="ret_cursor" value="{{ request.args.get('cursor') or '' }}" />
+                        <button type="submit" class="btn-secondary btn-danger">Удалить</button>
+                      </form>
                     {% else %}
                       <span class="muted">—</span>
                     {% endif %}
@@ -185,6 +209,19 @@
 
   <script>
     (function () {
+      window.confirmTechCardDelete = function (formEl) {
+        var work = (formEl && formEl.dataset && formEl.dataset.workName) || "—";
+        var brand = (formEl && formEl.dataset && formEl.dataset.brandName) || "—";
+        return window.confirm(
+          "Удалить техкарту без возможности восстановления?\n" +
+            "Работа: " +
+            work +
+            "\n" +
+            "Бренд: " +
+            brand
+        );
+      };
+
       var TC_BRANDS = {{ brand_options|tojson }};
       var TC_WORKS = {{ work_options|tojson }};
 
@@ -278,9 +315,9 @@
        */
       function resolveUidFromInput(items, inputEl, hiddenEl, entityName) {
         var tin = (inputEl.value || "").trim();
-        /* Пустое поле: не затираем hidden — иначе теряется brand_uid/work_uid из URL или когда
-           подпись не попала в TC_* (бренд вне первых N записей API). Сброс — «Сбросить». */
+        /* Пустое поле: считаем, что фильтр по сущности снят. */
         if (!tin) {
+          hiddenEl.value = "";
           return true;
         }
         var tlow = tin.toLowerCase();

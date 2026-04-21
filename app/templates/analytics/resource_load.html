@@ -1,0 +1,500 @@
+{% extends "base.html" %}
+{% block title %}Загруженность ресурсов — RMS Admin{% endblock %}
+{% block content %}
+  <style>
+    .kpi-help {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 8px 0 12px;
+      color: #334155;
+      position: relative;
+    }
+    .kpi-help__icon {
+      width: 20px;
+      height: 20px;
+      border-radius: 999px;
+      border: 1px solid #94a3b8;
+      color: #0f172a;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 12px;
+      cursor: help;
+      background: #fff;
+      user-select: none;
+    }
+    .kpi-help__tip {
+      display: none;
+      position: absolute;
+      top: 28px;
+      left: 0;
+      z-index: 20;
+      width: min(880px, 94vw);
+      max-height: min(70vh, 520px);
+      overflow: auto;
+      background: #0f172a;
+      color: #f8fafc;
+      border-radius: 10px;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.25);
+      padding: 12px 14px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .kpi-help__icon:hover + .kpi-help__tip,
+    .kpi-help__icon:focus + .kpi-help__tip {
+      display: block;
+    }
+    .kpi-help__tip ul {
+      margin: 0;
+      padding-left: 16px;
+    }
+    .kpi-help__tip li + li {
+      margin-top: 4px;
+    }
+  </style>
+  <div class="data-page">
+    <h1>Загруженность ресурсов</h1>
+    <div class="card">
+      <form method="get" action="/analytics/resource_load" class="data-filters">
+        <div style="min-width:260px;">
+          {% set suffix = "rl" %}
+          {% set hidden_name = "sc_uid" %}
+          {% set field_label = "Сервисный центр (для примера можно один)" %}
+          {% set options = sc_options %}
+          {% set selected_uid = filters.sc_uid %}
+          {% set selected_label = selected_sc_label %}
+          {% set require_sc = false %}
+          {% set form_id = "resource-load-form" %}
+          {% include "includes/sc_combobox_field.html" %}
+        </div>
+        <label>Дата от
+          <input type="date" name="date_from" value="{{ filters.date_from }}" required />
+        </label>
+        <label>Дата до
+          <input type="date" name="date_to" value="{{ filters.date_to }}" required />
+        </label>
+        <label>Шаг
+          <select name="slot_minutes">
+            <option value="60" {% if filters.slot_minutes == 60 %}selected{% endif %}>60 минут</option>
+            <option value="30" {% if filters.slot_minutes == 30 %}selected{% endif %}>30 минут</option>
+          </select>
+        </label>
+        <label>Ресурсы
+          <select name="resource_kind">
+            <option value="all" {% if filters.resource_kind == 'all' %}selected{% endif %}>Все</option>
+            <option value="employee" {% if filters.resource_kind == 'employee' %}selected{% endif %}>Только сотрудники</option>
+            <option value="working_zone" {% if filters.resource_kind == 'working_zone' %}selected{% endif %}>Только ворк-зоны</option>
+          </select>
+        </label>
+        <label>Категория
+          <select name="category">
+            <option value="all" {% if filters.category == 'all' %}selected{% endif %}>Все</option>
+            <option value="mechanic" {% if filters.category == 'mechanic' %}selected{% endif %}>
+              {% if filters.resource_kind == 'working_zone' %}Зоны: механика{% else %}Механики{% endif %}
+            </option>
+            <option value="washer" {% if filters.category == 'washer' %}selected{% endif %}>
+              {% if filters.resource_kind == 'working_zone' %}Зоны: мойка{% else %}Мойщики / Мойка{% endif %}
+            </option>
+          </select>
+        </label>
+        <button type="submit">Построить</button>
+      </form>
+    </div>
+
+    <div class="kpi-help">
+      <strong>Пояснение показателей</strong>
+      <span class="kpi-help__icon" tabindex="0" aria-label="Расшифровка показателей">i</span>
+      <div class="kpi-help__tip" role="tooltip">
+        <p style="margin:0 0 8px 0;"><strong>Базовые термины</strong></p>
+        <ul>
+          <li><strong>Занято (busy)</strong> — время из бронирований: сумма пересечений записей с выбранным периодом (и со слотом в графиках). Для нескольких сотрудников в одном слоте минуты суммируются — это суммарная потребность в ресурсе.</li>
+          <li><strong>Мощность (capacity)</strong> — сколько минут работы доступно по правилам: для сотрудников — график цикла (например 2/2), смена, обед из перерывов, выходные СЦ; для ворк-зон — упрощённо по рабочему окну дня и выходным СЦ.</li>
+          <li><strong>Дефицит в слоте</strong> — max(0, занято − мощность). Если мощность 0, а брони есть, дефицит покажет перегруз или несогласованность данных.</li>
+        </ul>
+        <p style="margin:10px 0 8px 0;"><strong>Фильтры формы</strong></p>
+        <ul>
+          <li><strong>СЦ</strong> — если не выбран, считаются все центры из справочника.</li>
+          <li><strong>Период дат</strong> — только для блоков ниже формы (KPI, график, heatmap), не для «Прогноза по механикам».</li>
+          <li><strong>Ресурсы</strong> — все / только сотрудники / только ворк-зоны.</li>
+          <li><strong>Категория</strong> — механики / мойщики (по типу ресурса в справочнике) или все.</li>
+        </ul>
+        <p style="margin:10px 0 8px 0;"><strong>Карточки KPI (основной отчёт)</strong></p>
+        <ul>
+          <li><strong>Всего ресурсов</strong> — число строк в выборке (сотрудники и/или ворк-зоны по фильтру).</li>
+          <li><strong>Задействовано / С бронированиями</strong> — сколько ресурсов имели хотя бы одну запись; в процентах — доля от «всего ресурсов».</li>
+          <li><strong>Бронирований всего</strong> — число уникальных бронирований (appointment_uid), попавших в текущий фильтр ресурсов и период.</li>
+          <li><strong>Средняя длительность бронирования ресурса, мин</strong> — сумма длительностей этих уникальных бронирований (в пересечении с периодом) / бронирований всего.</li>
+          <li><strong>Занято часов (сумма)</strong> — сумма busy по выбранным ресурсам за период, в часах.</li>
+          <li><strong>Доступно часов за период</strong> — сумма мощности по тем же ресурсам (смены 2/2, обеды, без «лишних» календарных дней без графика).</li>
+          <li><strong>Утилизация за период</strong> — занято / доступно по сумме минут; главный показатель заполненности пула ресурсов.</li>
+          <li><strong>Средняя загрузка</strong> — среднее арифметическое процентов загрузки по строкам ресурсов (каждый ресурс весит одинаково — может отличаться от утилизации).</li>
+          <li><strong>Средняя загрузка (только занятые)</strong> — средний % только среди ресурсов с busy &gt; 0.</li>
+          <li><strong>Пиковая загрузка</strong> — максимум отношения busy/capacity в одном временном слоте (по сумме по ресурсам в слоте).</li>
+          <li><strong>Дефицит часов</strong> — сумма дефицитов по всем слотам периода, в часах.</li>
+          <li><strong>Слотов с дефицитом</strong> — доля слотов, где занято &gt; мощности.</li>
+          <li><strong>Окон ≥2 ч / ≥4 ч подряд</strong> — сколько раз на сетке шага «Шаг» можно начать запись такой длины: подряд идут все нужные интервалы (2 ч или 4 ч), и в каждом запас ≥ длины шага (слот целиком свободен в модели суммарной мощности). Окна внутри дня считаются без пересечений (одна запись не «перекрывает» другую), отдельно по каждому ресурсу (сотруднику/ворк-зоне), затем суммируются.</li>
+          <li><strong>Средняя загрузка сотрудников / ворк-зон</strong> — отдельно по типу ресурса, без учёта второго типа.</li>
+          <li><strong>Сотрудники: механики / мойщики; Ворк-зоны: …</strong> — средняя загрузка внутри категории (механика / мойка и т.д.).</li>
+        </ul>
+        <p style="margin:10px 0 8px 0;"><strong>График и таблица «Спрос vs мощность (по дням)»</strong></p>
+        <ul>
+          <li>По каждому календарному дню суммируются занято и мощность по всем слотам дня; столбики — часы в день; утилизация в таблице — отношение сумм за день.</li>
+        </ul>
+        <p style="margin:10px 0 8px 0;"><strong>Heatmap дефицита</strong></p>
+        <ul>
+          <li>Ячейка «день недели × час» — средний дефицит в минутах по таким слотам за выбранный период; 0 — нехватки не было.</li>
+        </ul>
+        <p style="margin:10px 0 8px 0;"><strong>Прогноз по механикам (от сегодня)</strong></p>
+        <ul>
+          <li>Не зависит от дат в форме. Окна: с сегодняшней даты до +3 и до +7 календарных дней включительно.</li>
+          <li>Только сотрудники-категория «механик»; СЦ — как в фильтре (или все, если СЦ не выбран).</li>
+          <li><strong>Утилизация / Занято / Доступно</strong> — те же правила, что и в основном отчёте, но на фиксированном горизонте.</li>
+          <li><strong>Бронирований</strong> — число записей с механиком, попавших в окно.</li>
+          <li><strong>Окон ≥2 ч / ≥4 ч подряд / Дефицит часов</strong> — как в KPI, но только на этом окне.</li>
+        </ul>
+        <p style="margin:10px 0 8px 0;"><strong>Рекомендация по штату</strong></p>
+        <ul>
+          <li>Ориентировочная оценка по суммарному дефициту и длине периода (FTE); для решений смотрите утилизацию и прогноз.</li>
+        </ul>
+      </div>
+    </div>
+
+    {% if filters.resource_kind in ['all', 'employee'] %}
+      <div class="card">
+        <h3>Прогноз по механикам (от сегодня)</h3>
+        <p class="muted" style="margin-top:0;">
+          Не зависит от дат в форме выше. Период: от <span class="col-mono">{{ mechanic_forecast.anchor }}</span> для СЦ из фильтра.
+          <strong>Утилизация</strong> — сумма занятых минут / сумма доступных минут по слотам за окно (график смены 2/2, обеды, выходные СЦ).
+        </p>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px;">
+          <div style="border:1px solid var(--border); border-radius:8px; padding:12px;">
+            <div style="font-weight:600;">Сегодня — +3 дня (включительно)</div>
+            <div class="muted" style="font-size:12px; margin-bottom:8px;">по {{ mechanic_forecast.window_3.date_to }}</div>
+            <div><strong>Утилизация:</strong> {{ mechanic_forecast.window_3.utilization_pct }}%</div>
+            <div><strong>Занято:</strong> {{ mechanic_forecast.window_3.busy_hours }} ч</div>
+            <div><strong>Доступно:</strong> {{ mechanic_forecast.window_3.available_hours }} ч</div>
+            <div><strong>Бронирований:</strong> {{ mechanic_forecast.window_3.appointments }}</div>
+            <div><strong>Окон записи ≥2 ч подряд:</strong> {{ mechanic_forecast.window_3.free_slots_over_2h }}</div>
+            <div><strong>Окон записи ≥4 ч подряд:</strong> {{ mechanic_forecast.window_3.free_slots_over_4h }}</div>
+            <div><strong>Дефицит часов:</strong> {{ mechanic_forecast.window_3.deficit_hours }}</div>
+          </div>
+          <div style="border:1px solid var(--border); border-radius:8px; padding:12px;">
+            <div style="font-weight:600;">Сегодня — +7 дней (включительно)</div>
+            <div class="muted" style="font-size:12px; margin-bottom:8px;">по {{ mechanic_forecast.window_7.date_to }}</div>
+            <div><strong>Утилизация:</strong> {{ mechanic_forecast.window_7.utilization_pct }}%</div>
+            <div><strong>Занято:</strong> {{ mechanic_forecast.window_7.busy_hours }} ч</div>
+            <div><strong>Доступно:</strong> {{ mechanic_forecast.window_7.available_hours }} ч</div>
+            <div><strong>Бронирований:</strong> {{ mechanic_forecast.window_7.appointments }}</div>
+            <div><strong>Окон записи ≥2 ч подряд:</strong> {{ mechanic_forecast.window_7.free_slots_over_2h }}</div>
+            <div><strong>Окон записи ≥4 ч подряд:</strong> {{ mechanic_forecast.window_7.free_slots_over_4h }}</div>
+            <div><strong>Дефицит часов:</strong> {{ mechanic_forecast.window_7.deficit_hours }}</div>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+
+    {% set compact_mechanic_mode = filters.resource_kind == 'employee' and filters.category == 'mechanic' %}
+    <div class="stat-grid">
+      {% if compact_mechanic_mode %}
+        <div class="stat-card"><div class="stat-value">{{ kpi.total_resources }}</div><div class="stat-label">Механиков в выборке</div></div>
+        <div class="stat-card"><div class="stat-value">{{ kpi.engaged_resources }}</div><div class="stat-label">С бронированиями (шт)</div></div>
+        <div class="stat-card"><div class="stat-value">{{ kpi.appointments_total }}</div><div class="stat-label">Бронирований всего</div></div>
+        <div class="stat-card"><div class="stat-value">{{ kpi.busy_hours_total }}</div><div class="stat-label">Занято часов (сумма)</div></div>
+        <div class="stat-card"><div class="stat-value">{{ kpi.available_hours_total }}</div><div class="stat-label">Доступно часов за период</div></div>
+        <div class="stat-card"><div class="stat-value">{{ kpi.avg_booking_minutes_overall }}</div><div class="stat-label">Средняя длительность бронирования, мин</div></div>
+        <div class="stat-card"><div class="stat-value">{{ kpi.free_slots_over_2h }}</div><div class="stat-label">Окон ≥2 ч подряд</div></div>
+        <div class="stat-card"><div class="stat-value">{{ kpi.free_slots_over_4h }}</div><div class="stat-label">Окон ≥4 ч подряд</div></div>
+        <div class="stat-card"><div class="stat-value">{{ kpi.utilization_period_pct }}%</div><div class="stat-label">Утилизация за период</div></div>
+        <div class="stat-card"><div class="stat-value">{{ kpi.active_avg_load_pct }}%</div><div class="stat-label">Средняя загрузка (только занятые)</div></div>
+      {% else %}
+        <div class="stat-card"><div class="stat-value">{{ kpi.total_resources }}</div><div class="stat-label">Всего ресурсов</div></div>
+        <div class="stat-card"><div class="stat-value">{{ kpi.engaged_resources }}</div><div class="stat-label">Задействовано</div></div>
+        <div class="stat-card"><div class="stat-value">{{ kpi.appointments_total }}</div><div class="stat-label">Бронирований всего</div></div>
+        <div class="stat-card"><div class="stat-value">{{ kpi.busy_hours_total }}</div><div class="stat-label">Занято часов (сумма)</div></div>
+        <div class="stat-card"><div class="stat-value">{{ kpi.available_hours_total }}</div><div class="stat-label">Доступно часов за период</div></div>
+        <div class="stat-card"><div class="stat-value">{{ kpi.avg_booking_minutes_employee }}</div><div class="stat-label">Средняя запись на сотрудника, мин</div></div>
+        <div class="stat-card"><div class="stat-value">{{ kpi.free_slots_over_2h }}</div><div class="stat-label">Окон ≥2 ч подряд</div></div>
+        <div class="stat-card"><div class="stat-value">{{ kpi.free_slots_over_4h }}</div><div class="stat-label">Окон ≥4 ч подряд</div></div>
+        <div class="stat-card"><div class="stat-value">{{ kpi.utilization_period_pct }}%</div><div class="stat-label">Утилизация за период</div></div>
+        <div class="stat-card"><div class="stat-value">{{ kpi.avg_load_pct }}%</div><div class="stat-label">Средняя загрузка</div></div>
+        <div class="stat-card"><div class="stat-value">{{ kpi.active_avg_load_pct }}%</div><div class="stat-label">Средняя загрузка (только занятые)</div></div>
+        <div class="stat-card"><div class="stat-value">{{ kpi.peak_load_pct }}%</div><div class="stat-label">Пиковая загрузка</div></div>
+        <div class="stat-card"><div class="stat-value">{{ kpi.deficit_hours_total }}</div><div class="stat-label">Дефицит часов</div></div>
+        <div class="stat-card"><div class="stat-value">{{ kpi.deficit_slots_pct }}%</div><div class="stat-label">Слотов с дефицитом</div></div>
+        <div class="stat-card"><div class="stat-value">{{ employee_avg_load }}%</div><div class="stat-label">Средняя загрузка сотрудников</div></div>
+        <div class="stat-card"><div class="stat-value">{{ wz_avg_load }}%</div><div class="stat-label">Средняя загрузка ворк-зон</div></div>
+        <div class="stat-card"><div class="stat-value">{{ employee_bucket_stats.mechanic.avg_load_pct }}%</div><div class="stat-label">Сотрудники: механики</div></div>
+        <div class="stat-card"><div class="stat-value">{{ employee_bucket_stats.washer.avg_load_pct }}%</div><div class="stat-label">Сотрудники: мойщики</div></div>
+        <div class="stat-card"><div class="stat-value">{{ wz_bucket_stats.mechanic.avg_load_pct }}%</div><div class="stat-label">Ворк-зоны: механики</div></div>
+        <div class="stat-card"><div class="stat-value">{{ wz_bucket_stats.washer.avg_load_pct }}%</div><div class="stat-label">Ворк-зоны: мойка</div></div>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h3>Рекомендация по штату</h3>
+      {% if filters.resource_kind == 'employee' and filters.category == 'mechanic' %}
+        <p class="muted" style="margin:0 0 8px 0;">Срез: только сотрудники-механики за выбранный период.</p>
+      {% endif %}
+      <p style="margin:0 0 6px 0;"><strong>Решение:</strong> {{ "Нужен +1 сотрудник" if staff_recommendation.recommended_headcount_delta > 0 else "Текущего штата достаточно" }}</p>
+      <p style="margin:0;"><strong>FTE:</strong> {{ staff_recommendation.fte_needed }} · {{ staff_recommendation.reason }}</p>
+    </div>
+
+    <div class="card">
+      <h3>Спрос vs Мощность (по дням)</h3>
+      {% if not has_data %}
+        <p class="muted">Нет данных для выбранного периода.</p>
+      {% else %}
+        <p class="muted" style="margin-top:0;">
+          Синий столбик — доступная мощность (часы/день), красный — фактическая занятость (часы/день).
+        </p>
+        <div style="margin-bottom:12px;">
+          <canvas id="load-chart" height="120" style="width:100%; border:1px solid var(--border); border-radius:8px; background:#fff;"></canvas>
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Дата</th>
+                <th>Занято, ч</th>
+                <th>Мощность, ч</th>
+                <th>Дефицит, ч</th>
+                <th>Утилизация, %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in daily_chart_points %}
+                <tr>
+                  <td class="col-mono">{{ row.day }}</td>
+                  <td>{{ row.busy_hours }}</td>
+                  <td>{{ row.capacity_hours }}</td>
+                  <td>{% if row.deficit_hours > 0 %}<strong style="color:#b91c1c;">{{ row.deficit_hours }}</strong>{% else %}0{% endif %}</td>
+                  <td>{{ row.utilization_pct }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h3>Heatmap дефицита (день/час)</h3>
+      <p class="muted" style="margin-top:0;">
+        Цвет показывает средний дефицит минут в слоте: чем темнее, тем выше нехватка ресурса.
+      </p>
+      {% set weekdays = {1: "Пн", 2: "Вт", 3: "Ср", 4: "Чт", 5: "Пт", 6: "Сб", 7: "Вс"} %}
+      <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>День \ час</th>
+              {% for hour in heatmap_hours %}
+                <th>{{ "%02d:00"|format(hour) }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for wd in range(1, 8) %}
+              <tr>
+                <td><strong>{{ weekdays.get(wd, wd) }}</strong></td>
+                {% for hour in heatmap_hours %}
+                  {% set value = heatmap_matrix.get(wd, {}).get(hour, 0) %}
+                  {% set ratio = (value / heatmap_max_avg_deficit) if heatmap_max_avg_deficit > 0 else 0 %}
+                  {% set alpha = 0.08 + (0.82 * ratio) %}
+                  <td
+                    title="{{ weekdays.get(wd, wd) }} {{ '%02d:00'|format(hour) }} · дефицит {{ value }} мин"
+                    style="text-align:center; background-color: rgba(220,38,38,{{ '%.3f'|format(alpha) if value > 0 else '0.03' }});"
+                  >
+                    {{ value }}
+                  </td>
+                {% endfor %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {% if filters.resource_kind in ['all', 'employee'] %}
+      <div class="card">
+        <h3>Сотрудники</h3>
+        <p class="muted" style="margin-top:0;">
+          Механики: {{ employee_bucket_stats.mechanic.count }} · Мойщики: {{ employee_bucket_stats.washer.count }} · Прочие: {{ employee_bucket_stats.other.count }}
+        </p>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>ФИО / SSO</th>
+                <th>Тип ресурса</th>
+                <th>Категория</th>
+                <th>СЦ</th>
+                <th>Занято, мин</th>
+                <th>Мощность, мин</th>
+                <th>Загрузка, %</th>
+                <th>Записей</th>
+                <th>Ср. запись, мин</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in employee_rows %}
+                <tr>
+                  <td>{{ row.full_name }} <span class="col-mono">{{ row.sso_id }}</span></td>
+                  <td>{{ row.resource_type_label }}</td>
+                  <td>{% if row.bucket == 'mechanic' %}Механик{% elif row.bucket == 'washer' %}Мойщик{% else %}Прочее{% endif %}</td>
+                  <td>{{ row.service_center_name }}</td>
+                  <td>{{ row.busy_minutes }}</td>
+                  <td>{{ row.capacity_minutes }}</td>
+                  <td>{{ row.load_pct }}</td>
+                  <td>{{ row.appointments_count }}</td>
+                  <td>{{ row.avg_appointment_minutes }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
+
+    {% if filters.resource_kind in ['all', 'working_zone'] %}
+      <div class="card">
+        <h3>Рабочие зоны</h3>
+        <p class="muted" style="margin-top:0;">
+          Механические зоны: {{ wz_bucket_stats.mechanic.count }} · Мойка: {{ wz_bucket_stats.washer.count }} · Прочие: {{ wz_bucket_stats.other.count }}
+        </p>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Зона</th>
+                <th>Категория</th>
+                <th>СЦ</th>
+                <th>Занято, мин</th>
+                <th>Мощность, мин</th>
+                <th>Загрузка, %</th>
+                <th>Записей</th>
+                <th>Ср. запись, мин</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in wz_rows %}
+                <tr>
+                  <td>{{ row.resource_type_label }} · {{ row.description }}</td>
+                  <td>{% if row.bucket == 'mechanic' %}Механик{% elif row.bucket == 'washer' %}Мойка{% else %}Прочее{% endif %}</td>
+                  <td>{{ row.service_center_name }}</td>
+                  <td>{{ row.busy_minutes }}</td>
+                  <td>{{ row.capacity_minutes }}</td>
+                  <td>{{ row.load_pct }}</td>
+                  <td>{{ row.appointments_count }}</td>
+                  <td>{{ row.avg_appointment_minutes }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+  <script>
+    (function () {
+      var resourceKindSelect = document.querySelector('select[name="resource_kind"]');
+      var categorySelect = document.querySelector('select[name="category"]');
+      function syncCategoryLabels() {
+        if (!resourceKindSelect || !categorySelect) return;
+        var mechanicOpt = categorySelect.querySelector('option[value="mechanic"]');
+        var washerOpt = categorySelect.querySelector('option[value="washer"]');
+        if (!mechanicOpt || !washerOpt) return;
+        if (resourceKindSelect.value === "working_zone") {
+          mechanicOpt.textContent = "Зоны: механика";
+          washerOpt.textContent = "Зоны: мойка";
+        } else {
+          mechanicOpt.textContent = "Механики";
+          washerOpt.textContent = "Мойщики / Мойка";
+        }
+      }
+      syncCategoryLabels();
+      if (resourceKindSelect) {
+        resourceKindSelect.addEventListener("change", syncCategoryLabels);
+      }
+
+      var points = {{ daily_chart_points|tojson }};
+      var canvas = document.getElementById("load-chart");
+      if (!canvas || !points || !points.length) return;
+      var ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      function fitCanvas() {
+        var dpr = window.devicePixelRatio || 1;
+        var cssW = canvas.clientWidth || 900;
+        var cssH = 240;
+        canvas.style.height = cssH + "px";
+        canvas.width = Math.floor(cssW * dpr);
+        canvas.height = Math.floor(cssH * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        draw(cssW, cssH);
+      }
+
+      function draw(w, h) {
+        ctx.clearRect(0, 0, w, h);
+        var pad = { l: 44, r: 18, t: 14, b: 24 };
+        var plotW = w - pad.l - pad.r;
+        var plotH = h - pad.t - pad.b;
+        if (plotW <= 10 || plotH <= 10) return;
+
+        var maxY = 1;
+        for (var i = 0; i < points.length; i++) {
+          maxY = Math.max(maxY, Number(points[i].busy_hours || 0), Number(points[i].capacity_hours || 0));
+        }
+        maxY = Math.ceil(maxY);
+
+        ctx.strokeStyle = "#e2e8f0";
+        ctx.lineWidth = 1;
+        for (var g = 0; g <= 4; g++) {
+          var gy = pad.t + (plotH * g) / 4;
+          ctx.beginPath();
+          ctx.moveTo(pad.l, gy);
+          ctx.lineTo(w - pad.r, gy);
+          ctx.stroke();
+          var val = Math.round((maxY - (maxY * g) / 4) * 10) / 10;
+          ctx.fillStyle = "#64748b";
+          ctx.font = "11px system-ui";
+          ctx.fillText(String(val) + "ч", 6, gy + 4);
+        }
+
+        var groupW = plotW / Math.max(1, points.length);
+        var barW = Math.max(4, Math.min(24, groupW * 0.32));
+        for (var i = 0; i < points.length; i++) {
+          var cx = pad.l + groupW * i + groupW / 2;
+          var cap = Number(points[i].capacity_hours || 0);
+          var busy = Number(points[i].busy_hours || 0);
+          var capH = (cap / maxY) * plotH;
+          var busyH = (busy / maxY) * plotH;
+          ctx.fillStyle = "#2563eb";
+          ctx.fillRect(cx - barW - 1, pad.t + plotH - capH, barW, capH);
+          ctx.fillStyle = "#dc2626";
+          ctx.fillRect(cx + 1, pad.t + plotH - busyH, barW, busyH);
+          if (i % Math.max(1, Math.ceil(points.length / 8)) === 0) {
+            ctx.fillStyle = "#64748b";
+            ctx.font = "10px system-ui";
+            ctx.fillText(String(points[i].day || "").slice(5), cx - 16, h - 6);
+          }
+        }
+
+        ctx.fillStyle = "#2563eb";
+        ctx.fillRect(pad.l, h - 16, 10, 10);
+        ctx.fillStyle = "#0f172a";
+        ctx.font = "12px system-ui";
+        ctx.fillText("Мощность (ч/день)", pad.l + 14, h - 7);
+        ctx.fillStyle = "#dc2626";
+        ctx.fillRect(pad.l + 170, h - 16, 10, 10);
+        ctx.fillStyle = "#0f172a";
+        ctx.fillText("Спрос (ч/день)", pad.l + 184, h - 7);
+      }
+
+      fitCanvas();
+      window.addEventListener("resize", fitCanvas);
+    })();
+  </script>
+{% endblock %}

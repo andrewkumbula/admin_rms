@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlencode
 
 from flask import Blueprint, redirect, render_template, request, url_for
 
@@ -24,6 +25,9 @@ PARENT_RESOURCE_TYPES = (
 
 # Сколько брендов/работ подтянуть в выпадающие списки (несколько страниц API)
 _TECH_CARD_FILTER_OPTIONS_MAX = 4000
+_TECH_CARD_SCAN_MAX = 20000
+_EXTERNAL_EMPLOYEE_SCAN_MAX = 4000
+_REPLACEMENT_TYPE_SCAN_MAX = 5000
 
 
 def _fetch_paginated_top_level(client: RMSClient, path: str, max_total: int) -> List[dict]:
@@ -59,6 +63,194 @@ def _work_option_label(row: dict) -> str:
     return str(row.get("name") or row.get("uid") or "—")
 
 
+def _fetch_external_employee_resource_options(client: RMSClient) -> List[Dict[str, str]]:
+    rows = _fetch_paginated_top_level(client, "/api/v1/resource_type", _TECH_CARD_FILTER_OPTIONS_MAX)
+    out: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for row in rows:
+        uid = str(row.get("uid") or "").strip()
+        if not uid or uid in seen:
+            continue
+        parent = str(row.get("parent_resource_type") or "").strip()
+        if parent.casefold() != "внешний сотрудник":
+            continue
+        child = str(row.get("children_resource_type") or "").strip()
+        label = f"{child} ({parent})" if child and parent else (child or parent or uid)
+        seen.add(uid)
+        out.append({"uid": uid, "label": label})
+    out.sort(key=lambda x: str(x.get("label") or "").casefold())
+    return out
+
+
+def _extract_employee_list(payload: Any) -> List[Dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    data = payload.get("data")
+    if isinstance(data, list):
+        return [x for x in data if isinstance(x, dict)]
+    if isinstance(data, dict):
+        for key in ("employees", "items", "resources"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return [x for x in value if isinstance(x, dict)]
+    return []
+
+
+def _fetch_external_employees_all(client: RMSClient, max_total: int) -> tuple[List[Dict[str, Any]], bool, Optional[str]]:
+    acc: List[Dict[str, Any]] = []
+    cursor: Optional[str] = None
+    truncated = False
+    while len(acc) < max_total:
+        chunk_limit = min(RMS_LIST_PAGE_LIMIT, max_total - len(acc))
+        params: Dict[str, Any] = {"limit": chunk_limit}
+        if cursor:
+            params["cursor"] = cursor
+        # Просим API сразу вернуть внешних, но дополнительно фильтруем локально.
+        params["is_external"] = True
+        resp = client.get("/api/v1/employee/external", params=params)
+        if not resp.ok:
+            return acc, truncated, resp.error
+        payload = resp.data if isinstance(resp.data, dict) else {}
+        chunk = _extract_employee_list(payload)
+        for row in chunk:
+            if not bool(row.get("is_external")):
+                continue
+            acc.append(row)
+            if len(acc) >= max_total:
+                truncated = bool(payload.get("has_more"))
+                break
+        if truncated:
+            break
+        if not bool(payload.get("has_more")):
+            break
+        nxt = str(payload.get("cursor") or "").strip()
+        if not nxt:
+            break
+        cursor = nxt
+    if len(acc) >= max_total:
+        truncated = True
+    return acc, truncated, None
+
+
+def _redirect_external_employees(msg: Optional[str] = None, msg_type: str = "info") -> str:
+    q: Dict[str, str] = {}
+    if msg:
+        q["ee_msg"] = msg
+        q["ee_msg_type"] = msg_type
+    return url_for("dictionaries.external_employees", **q)
+
+
+def _redirect_replacement_types(msg: Optional[str] = None, msg_type: str = "info") -> str:
+    q: Dict[str, str] = {}
+    if msg:
+        q["rp_msg"] = msg
+        q["rp_msg_type"] = msg_type
+    return url_for("dictionaries.replacement_types", **q)
+
+
+def _fetch_replacement_types_all(
+    client: RMSClient,
+    is_active: bool,
+    max_total: int,
+    replacing_uid: str = "",
+    replaced_uid: str = "",
+) -> tuple[List[Dict[str, Any]], bool, Optional[str]]:
+    acc: List[Dict[str, Any]] = []
+    cursor: Optional[str] = None
+    truncated = False
+    while len(acc) < max_total:
+        chunk_limit = min(RMS_LIST_PAGE_LIMIT, max_total - len(acc))
+        params: Dict[str, Any] = {"limit": chunk_limit, "is_active": is_active}
+        if cursor:
+            params["cursor"] = cursor
+        resp = client.get("/api/v1/replacement_type", params=params)
+        if not resp.ok:
+            if resp.status_code == 404:
+                return acc, truncated, None
+            return acc, truncated, resp.error
+        payload = resp.data if isinstance(resp.data, dict) else {}
+        data = payload.get("data")
+        chunk = data if isinstance(data, list) else []
+        for row in chunk:
+            if not isinstance(row, dict):
+                continue
+            rep = row.get("replacing_resource") if isinstance(row.get("replacing_resource"), dict) else {}
+            red = row.get("replaced_resource") if isinstance(row.get("replaced_resource"), dict) else {}
+            rep_uid = str(rep.get("resource_type_uid") or "").strip()
+            red_uid = str(red.get("resource_type_uid") or "").strip()
+            if replacing_uid and rep_uid != replacing_uid:
+                continue
+            if replaced_uid and red_uid != replaced_uid:
+                continue
+            acc.append(row)
+            if len(acc) >= max_total:
+                truncated = bool(payload.get("has_more"))
+                break
+        if truncated:
+            break
+        if not bool(payload.get("has_more")):
+            break
+        nxt = str(payload.get("cursor") or "").strip()
+        if not nxt:
+            break
+        cursor = nxt
+    if len(acc) >= max_total:
+        truncated = True
+    return acc, truncated, None
+
+
+def _fetch_tech_cards_all_pages(
+    client: RMSClient,
+    brand_uid: str,
+    work_uid: str,
+    max_total: int,
+) -> tuple[List[dict], bool, Optional[str]]:
+    """
+    Обход всех страниц /api/v1/tech_specification_list с локальной фильтрацией по UID.
+    Возвращает (items, truncated, error).
+    """
+    acc: List[dict] = []
+    cursor: Optional[str] = None
+    truncated = False
+    while len(acc) < max_total:
+        chunk_limit = min(RMS_LIST_PAGE_LIMIT, max_total - len(acc))
+        params: dict[str, Any] = {"limit": chunk_limit}
+        if cursor:
+            params["cursor"] = cursor
+        # Читаем сырые страницы без серверных фильтров RMS, чтобы локально отфильтровать
+        # одинаково корректно (в т.ч. для техкарт без бренда).
+        resp = client.get("/api/v1/tech_specification_list", params=params)
+        if not resp.ok:
+            return acc, truncated, resp.error
+        payload = resp.data if isinstance(resp.data, dict) else {}
+        chunk_raw = payload.get("data")
+        chunk = chunk_raw if isinstance(chunk_raw, list) else []
+        for row in chunk:
+            if not isinstance(row, dict):
+                continue
+            row_brand = str(row.get("brand_uid") or "").strip()
+            row_work = str(row.get("work_uid") or "").strip()
+            if brand_uid and row_brand != brand_uid:
+                continue
+            if work_uid and row_work != work_uid:
+                continue
+            acc.append(row)
+            if len(acc) >= max_total:
+                truncated = bool(payload.get("has_more"))
+                break
+        if truncated:
+            break
+        if not bool(payload.get("has_more")):
+            break
+        nxt = str(payload.get("cursor") or "").strip()
+        if not nxt:
+            break
+        cursor = nxt
+    if len(acc) >= max_total:
+        truncated = True
+    return acc, truncated, None
+
+
 def _redirect_resource_types(msg: Optional[str] = None, msg_type: str = "info") -> str:
     q: Dict[str, str] = {}
     if msg:
@@ -71,6 +263,179 @@ def _redirect_resource_types(msg: Optional[str] = None, msg_type: str = "info") 
 @require_permission("dictionary.resource_type.read")
 def index():
     return render_template("dictionaries/index.html")
+
+
+@bp.get("/external_employees")
+@require_permission("service_center.read")
+def external_employees():
+    client = RMSClient()
+    items, truncated, err = _fetch_external_employees_all(client, _EXTERNAL_EMPLOYEE_SCAN_MAX)
+    resource_options = _fetch_external_employee_resource_options(client)
+    if not err and truncated:
+        err = (
+            f"Показаны первые {_EXTERNAL_EMPLOYEE_SCAN_MAX} внешних сотрудников. "
+            "Уточните отбор на стороне RMS при необходимости."
+        )
+    return render_template(
+        "dictionaries/external_employees.html",
+        items=items,
+        error=err,
+        resource_type_options=resource_options,
+        can_manage=has_permission("service_center.update"),
+        ee_msg=request.args.get("ee_msg"),
+        ee_msg_type=request.args.get("ee_msg_type") or "info",
+    )
+
+
+@bp.post("/external_employees/create")
+@require_permission("service_center.update")
+def external_employees_create():
+    sso_id = (request.form.get("sso_id") or "").strip()
+    resource_type_uid = (request.form.get("resource_type_uid") or "").strip()
+    contract_due_date = (request.form.get("contract_due_date") or "").strip()
+    if not sso_id or not resource_type_uid:
+        return redirect(_redirect_external_employees("Укажите SSO ID и тип ресурса", "error"))
+    body: Dict[str, Any] = {
+        "sso_id": sso_id,
+        "resource_type_uid": resource_type_uid,
+        "is_external": True,
+    }
+    if contract_due_date:
+        body["contract_due_date"] = contract_due_date
+    client = RMSClient()
+    resp = client.post("/api/v1/employee", json=body)
+    if not resp.ok:
+        resp = client.post("/api/v2/employee", json=body)
+    if resp.ok:
+        return redirect(_redirect_external_employees("Внешний сотрудник добавлен", "success"))
+    return redirect(_redirect_external_employees(resp.error or "Ошибка создания внешнего сотрудника", "error"))
+
+
+@bp.post("/external_employees/<employee_uid>/patch")
+@require_permission("service_center.update")
+def external_employees_patch(employee_uid: str):
+    resource_type_uid = (request.form.get("resource_type_uid") or "").strip()
+    contract_due_date = (request.form.get("contract_due_date") or "").strip()
+    body: Dict[str, Any] = {}
+    if resource_type_uid:
+        body["resource_type_uid"] = resource_type_uid
+    if contract_due_date:
+        body["contract_due_date"] = contract_due_date
+    if not body:
+        return redirect(_redirect_external_employees("Укажите поле для обновления", "error"))
+    client = RMSClient()
+    resp = client.patch(f"/api/v1/employee/{employee_uid}", json=body)
+    if not resp.ok:
+        resp = client.patch(f"/api/v2/employee/{employee_uid}", json=body)
+    if resp.ok:
+        return redirect(_redirect_external_employees("Внешний сотрудник обновлён", "success"))
+    return redirect(_redirect_external_employees(resp.error or "Ошибка обновления", "error"))
+
+
+@bp.post("/external_employees/<employee_uid>/disable")
+@require_permission("service_center.update")
+def external_employees_disable(employee_uid: str):
+    client = RMSClient()
+    resp = client.patch(f"/api/v1/employee/{employee_uid}", json={"is_available": False})
+    if not resp.ok:
+        resp = client.patch(f"/api/v2/employee/{employee_uid}", json={"is_available": False})
+    if resp.ok:
+        return redirect(_redirect_external_employees("Внешний сотрудник отключён", "success"))
+    err = (resp.error or "").lower()
+    if resp.status_code == 409 and ("already" in err or "соответствует" in err):
+        return redirect(_redirect_external_employees("Внешний сотрудник уже отключён", "info"))
+    return redirect(_redirect_external_employees(resp.error or "Ошибка отключения", "error"))
+
+
+@bp.get("/replacement_types")
+@require_permission("dictionary.replacement_type.read")
+def replacement_types():
+    replacing_uid = (request.args.get("replacing_uid") or "").strip()
+    replaced_uid = (request.args.get("replaced_uid") or "").strip()
+    status_raw = (request.args.get("status") or "active").strip().lower()
+    is_active = status_raw != "inactive"
+
+    client = RMSClient()
+    items, truncated, err = _fetch_replacement_types_all(
+        client,
+        is_active=is_active,
+        max_total=_REPLACEMENT_TYPE_SCAN_MAX,
+        replacing_uid=replacing_uid,
+        replaced_uid=replaced_uid,
+    )
+    resource_type_options = _fetch_paginated_top_level(client, "/api/v1/resource_type", _TECH_CARD_FILTER_OPTIONS_MAX)
+    rt_options: List[Dict[str, str]] = []
+    seen_rt: set[str] = set()
+    for row in resource_type_options:
+        uid = str(row.get("uid") or "").strip()
+        if not uid or uid in seen_rt:
+            continue
+        seen_rt.add(uid)
+        rt_options.append({"uid": uid, "label": _resource_type_option_label(row)})
+    rt_options.sort(key=lambda x: str(x.get("label") or "").casefold())
+
+    if not err and truncated:
+        err = (
+            f"Показаны первые {_REPLACEMENT_TYPE_SCAN_MAX} связей. "
+            "Уточните фильтры, чтобы сузить выборку."
+        )
+
+    return render_template(
+        "dictionaries/replacement_types.html",
+        items=items,
+        error=err,
+        rt_options=rt_options,
+        selected_replacing_uid=replacing_uid,
+        selected_replaced_uid=replaced_uid,
+        selected_status=("inactive" if not is_active else "active"),
+        can_create=has_permission("dictionary.replacement_type.create"),
+        can_update=has_permission("dictionary.replacement_type.update"),
+        can_delete=has_permission("dictionary.replacement_type.delete"),
+        rp_msg=request.args.get("rp_msg"),
+        rp_msg_type=request.args.get("rp_msg_type") or "info",
+    )
+
+
+@bp.post("/replacement_types/create")
+@require_permission("dictionary.replacement_type.create")
+def replacement_types_create():
+    replacing_uid = (request.form.get("replacing_resource_type_uid") or "").strip()
+    replaced_uid = (request.form.get("replaced_resource_type_uid") or "").strip()
+    if not replacing_uid or not replaced_uid:
+        return redirect(_redirect_replacement_types("Выберите оба типа ресурса", "error"))
+    body = {
+        "replacing_resource_type_uid": replacing_uid,
+        "replaced_resource_type_uid": replaced_uid,
+    }
+    resp = RMSClient().post("/api/v1/replacement_type", json=body)
+    if resp.ok:
+        return redirect(_redirect_replacement_types("Связь взаимозаменяемости создана", "success"))
+    return redirect(_redirect_replacement_types(resp.error or "Ошибка создания связи", "error"))
+
+
+@bp.post("/replacement_types/<uid>/toggle")
+@require_permission("dictionary.replacement_type.update")
+def replacement_types_toggle(uid: str):
+    is_active_raw = (request.form.get("is_active") or "").strip().lower()
+    is_active = is_active_raw in {"1", "true", "yes", "on"}
+    resp = RMSClient().patch(f"/api/v1/replacement_type/{uid}", json={"is_active": is_active})
+    if resp.ok:
+        return redirect(
+            _redirect_replacement_types(
+                "Связь активирована" if is_active else "Связь деактивирована",
+                "success",
+            )
+        )
+    return redirect(_redirect_replacement_types(resp.error or "Ошибка обновления связи", "error"))
+
+
+@bp.post("/replacement_types/<uid>/delete")
+@require_permission("dictionary.replacement_type.delete")
+def replacement_types_delete(uid: str):
+    resp = RMSClient().delete(f"/api/v1/replacement_type/{uid}")
+    if resp.ok:
+        return redirect(_redirect_replacement_types("Связь деактивирована", "success"))
+    return redirect(_redirect_replacement_types(resp.error or "Ошибка удаления связи", "error"))
 
 
 @bp.get("/resource_types")
@@ -220,18 +585,29 @@ def tech_cards():
     brand_uid = (request.args.get("brand_uid") or "").strip()
     work_uid = (request.args.get("work_uid") or "").strip()
 
-    params: dict[str, Any] = {"limit": RMS_LIST_PAGE_LIMIT}
-    if cursor:
-        params["cursor"] = cursor
-    if brand_uid:
-        params["brand_uid"] = brand_uid
-    if work_uid:
-        params["work_uid"] = work_uid
-
     client = RMSClient()
-    resp = client.get("/api/v1/tech_specification_list", params=params)
-    items = _parse_tech_cards(resp.data)
-    meta = _parse_tech_metadata(resp.data)
+    if brand_uid or work_uid:
+        items, truncated, local_error = _fetch_tech_cards_all_pages(
+            client,
+            brand_uid=brand_uid,
+            work_uid=work_uid,
+            max_total=_TECH_CARD_SCAN_MAX,
+        )
+        meta = {"next_cursor": "", "has_more": False}
+        error = local_error
+        if not error and truncated:
+            error = (
+                f"Показаны первые {_TECH_CARD_SCAN_MAX} техкарт по фильтру. "
+                "Уточните фильтр, чтобы сузить выборку."
+            )
+    else:
+        params: dict[str, Any] = {"limit": RMS_LIST_PAGE_LIMIT}
+        if cursor:
+            params["cursor"] = cursor
+        resp = client.get("/api/v1/tech_specification_list", params=params)
+        items = _parse_tech_cards(resp.data)
+        meta = _parse_tech_metadata(resp.data)
+        error = resp.error if not resp.ok else None
 
     brand_options, work_options, _, _ = _fetch_tech_card_form_options(client)
 
@@ -239,7 +615,7 @@ def tech_cards():
         "dictionaries/tech_cards.html",
         items=items,
         page=meta,
-        error=resp.error if not resp.ok else None,
+        error=error,
         brand_options=brand_options,
         work_options=work_options,
         selected_brand_uid=brand_uid,
@@ -251,6 +627,41 @@ def tech_cards():
         tc_msg=request.args.get("tc_msg"),
         tc_msg_type=request.args.get("tc_msg_type") or "info",
     )
+
+
+@bp.post("/tech_cards/delete")
+@require_permission("dictionary.tech_card.read")
+def tech_cards_delete():
+    work_uid = (request.form.get("work_uid") or "").strip()
+    brand_uid = (request.form.get("brand_uid") or "").strip()
+    ret_brand_uid = (request.form.get("ret_brand_uid") or "").strip()
+    ret_work_uid = (request.form.get("ret_work_uid") or "").strip()
+    ret_cursor = (request.form.get("ret_cursor") or "").strip()
+
+    if not work_uid or not brand_uid:
+        return redirect(_redirect_tech_cards("Для удаления нужны work_uid и brand_uid", "error"))
+
+    # В RMS техкарта идентифицируется связкой work_uid + brand_uid.
+    query = urlencode({"work_uid": work_uid, "brand_uid": brand_uid})
+    resp = RMSClient().delete(f"/api/v1/tech_specification?{query}")
+    if not resp.ok:
+        # Фолбэк на вариант API, где параметры ожидаются в JSON body.
+        resp = RMSClient().delete(
+            "/api/v1/tech_specification",
+            json={"work_uid": work_uid, "brand_uid": brand_uid},
+        )
+
+    if not resp.ok:
+        return redirect(_redirect_tech_cards(resp.error or "Не удалось удалить техкарту", "error"))
+
+    q: Dict[str, str] = {"tc_msg": "Техкарта удалена", "tc_msg_type": "success"}
+    if ret_brand_uid:
+        q["brand_uid"] = ret_brand_uid
+    if ret_work_uid:
+        q["work_uid"] = ret_work_uid
+    if ret_cursor:
+        q["cursor"] = ret_cursor
+    return redirect(url_for("dictionaries.tech_cards", **q))
 
 
 @bp.get("/tech_cards/new")
@@ -281,8 +692,6 @@ def tech_cards_create():
 
     if not work_uid:
         return redirect(_redirect_tech_cards_new("Выберите работу", "error"))
-    if not brand_uid:
-        return redirect(_redirect_tech_cards_new("Выберите бренд", "error"))
 
     if not resource_type_uids or not quantity_values:
         return redirect(_redirect_tech_cards_new("Добавьте хотя бы один тип ресурса", "error"))
@@ -315,13 +724,13 @@ def tech_cards_create():
             return redirect(_redirect_tech_cards_new("Количество должно быть целым числом", "error"))
         if quantity <= 0:
             return redirect(_redirect_tech_cards_new("Количество должно быть больше нуля", "error"))
-        resource_info.append(
-            {
-                "resource_type_uid": resource_type_uid,
-                "quantity": quantity,
-                "brands": [{"uid": brand_uid}],
-            }
-        )
+        row: Dict[str, Any] = {
+            "resource_type_uid": resource_type_uid,
+            "quantity": quantity,
+        }
+        if brand_uid:
+            row["brands"] = [{"uid": brand_uid}]
+        resource_info.append(row)
 
     body: Dict[str, Any] = {
         "work_resources": [
