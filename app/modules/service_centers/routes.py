@@ -43,6 +43,62 @@ def _fetch_global_schedule_rows(client: RMSClient) -> List[Dict[str, Any]]:
     return rows
 
 
+def _fetch_brand_options(client: RMSClient, max_total: int = 2000) -> List[Dict[str, str]]:
+    rows: List[Dict[str, str]] = []
+    cursor: Optional[str] = None
+    while len(rows) < max_total:
+        chunk_limit = min(RMS_LIST_PAGE_LIMIT, max_total - len(rows))
+        params: Dict[str, Any] = {"limit": chunk_limit}
+        if cursor:
+            params["cursor"] = cursor
+        resp = client.get("/api/v1/brands", params=params)
+        if not resp.ok:
+            break
+        payload = resp.data if isinstance(resp.data, dict) else {}
+        data = payload.get("data")
+        chunk = data if isinstance(data, list) else []
+        for row in chunk:
+            if not isinstance(row, dict):
+                continue
+            uid = str(row.get("uid") or "").strip()
+            if not uid:
+                continue
+            name = str(row.get("brand_name") or row.get("name") or uid).strip()
+            mdm_brand_id = str(row.get("mdm_brand_id") or "").strip()
+            if not mdm_brand_id:
+                continue
+            label = f"{name} ({mdm_brand_id})" if mdm_brand_id else name
+            rows.append({"uid": uid, "label": label, "mdm_brand_id": mdm_brand_id, "name": name})
+        if not bool(payload.get("has_more")):
+            break
+        nxt = str(payload.get("cursor") or "").strip()
+        if not nxt:
+            break
+        cursor = nxt
+    uniq: Dict[str, Dict[str, str]] = {}
+    for row in rows:
+        uid = row.get("uid") or ""
+        if uid and uid not in uniq:
+            uniq[uid] = row
+    out = list(uniq.values())
+    out.sort(key=lambda x: str(x.get("label") or "").casefold())
+    return out
+
+
+def _extract_brand_restrictions(payload: Any) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return [], {"next_cursor": "", "has_more": False}
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return [], {"next_cursor": "", "has_more": False}
+    rows_raw = data.get("restrictions_info")
+    rows = rows_raw if isinstance(rows_raw, list) else []
+    return [r for r in rows if isinstance(r, dict)], {
+        "next_cursor": str(payload.get("cursor") or ""),
+        "has_more": bool(payload.get("has_more")),
+    }
+
+
 def _build_effective_schedule_rows(
     global_rows: List[Dict[str, Any]], local_rows: List[Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
@@ -405,7 +461,15 @@ def detail_page(uid: str):
     can_read_department = has_permission("department.read")
     can_read_working_zone = has_permission("dictionary.working_zone.read")
     can_read_warehouse = has_permission("warehouse.read")
-    allowed_tabs = {"overview", "schedule", "employees", "equipment", "day_offs", "slots"}
+    allowed_tabs = {
+        "overview",
+        "schedule",
+        "employees",
+        "equipment",
+        "day_offs",
+        "slots",
+        "brand_restrictions",
+    }
     if can_read_department:
         allowed_tabs.add("departments")
     if can_read_working_zone:
@@ -693,6 +757,28 @@ def detail_page(uid: str):
             if not slots_q_start:
                 slots_q_start = date.today().isoformat()
 
+    brand_restriction_items: List[Dict[str, Any]] = []
+    brand_restrictions_page = {"next_cursor": "", "has_more": False}
+    brand_restrictions_error: Optional[str] = None
+    brands_cursor = (request.args.get("brands_cursor") or "").strip()
+    brand_options: List[Dict[str, str]] = []
+    can_manage_brand_restrictions = has_permission("service_center.update") or has_permission(
+        "service_center.read"
+    )
+    if tab == "brand_restrictions":
+        br_params: Dict[str, Any] = {"limit": RMS_LIST_PAGE_LIMIT}
+        if brands_cursor:
+            br_params["cursor"] = brands_cursor
+        br_resp = client.get(f"/api/v1/service_center/{uid}/brand-restrictions", params=br_params)
+        if br_resp.ok:
+            brand_restriction_items, brand_restrictions_page = _extract_brand_restrictions(br_resp.data)
+        elif br_resp.status_code == 404:
+            brand_restriction_items = []
+        else:
+            brand_restrictions_error = br_resp.error
+        if can_manage_brand_restrictions:
+            brand_options = _fetch_brand_options(client)
+
     errors = [
         f"service_center: {sc_resp.error}" if not sc_resp.ok and sc_resp.error else None,
         f"employees: {employees_resp.error}" if not employees_resp.ok and employees_resp.error else None,
@@ -704,6 +790,7 @@ def detail_page(uid: str):
         f"departments: {departments_error}" if departments_error else None,
         f"providers: {provider_err}" if provider_err else None,
         f"warehouses: {warehouses_error}" if warehouses_error else None,
+        f"brand_restrictions: {brand_restrictions_error}" if brand_restrictions_error else None,
     ]
 
     can_mutate_franchise = has_permission("service_center.update") or has_permission("franchisee.update")
@@ -760,6 +847,50 @@ def detail_page(uid: str):
         provider_codes=PROVIDER_CODES,
         can_read_warehouse=can_read_warehouse,
         warehouse_items=warehouse_items,
+        brand_restriction_items=brand_restriction_items,
+        brand_restrictions_page=brand_restrictions_page,
+        brand_options=brand_options,
+        can_manage_brand_restrictions=can_manage_brand_restrictions,
+    )
+
+
+@bp.post("/<uid>/brand_restrictions/create")
+@require_any_permission("service_center.update", "service_center.read")
+def brand_restriction_create(uid: str):
+    mdm_brand_id_raw = (request.form.get("mdm_brand_id") or "").strip()
+    if not mdm_brand_id_raw:
+        return redirect(_redirect_detail(uid, "brand_restrictions", "Укажите mdm_brand_id бренда", "error"))
+    try:
+        mdm_brand_id = int(mdm_brand_id_raw)
+    except ValueError:
+        return redirect(
+            _redirect_detail(uid, "brand_restrictions", "mdm_brand_id должен быть целым числом", "error")
+        )
+    client = RMSClient()
+    resp = client.post(
+        f"/api/v1/service_center/{uid}/brand-restrictions",
+        json={"mdm_brand_id": mdm_brand_id},
+    )
+    if resp.ok:
+        return redirect(
+            _redirect_detail(uid, "brand_restrictions", "Обслуживание бренда в СЦ отключено", "success")
+        )
+    return redirect(
+        _redirect_detail(uid, "brand_restrictions", resp.error or "Ошибка отключения бренда", "error")
+    )
+
+
+@bp.post("/<uid>/brand_restrictions/<restriction_uid>/delete")
+@require_any_permission("service_center.update", "service_center.read")
+def brand_restriction_delete(uid: str, restriction_uid: str):
+    client = RMSClient()
+    resp = client.delete(f"/api/v1/service_center/{uid}/brand-restrictions/{restriction_uid}")
+    if resp.ok:
+        return redirect(
+            _redirect_detail(uid, "brand_restrictions", "Ограничение обслуживания бренда удалено", "success")
+        )
+    return redirect(
+        _redirect_detail(uid, "brand_restrictions", resp.error or "Ошибка удаления ограничения", "error")
     )
 
 

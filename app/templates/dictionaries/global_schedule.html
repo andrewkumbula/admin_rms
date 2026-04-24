@@ -30,6 +30,52 @@
       </div>
     {% endif %}
 
+    {% if can_create %}
+      <div class="card">
+        <h3 style="margin-top:0;">Добавить глобальный выходной</h3>
+        <form method="post" action="/dictionaries/global_schedule/holiday/create" class="data-filters">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <label>Дата <input type="date" name="holiday_date" required /></label>
+          <label>Причина <input type="text" name="holiday_reason" placeholder="Например: Новый год" /></label>
+          <button type="submit">Добавить</button>
+        </form>
+      </div>
+    {% endif %}
+
+    <div class="card">
+      <h3 style="margin-top:0;">Глобальные выходные</h3>
+      {% if holidays_error %}
+        {% set error = holidays_error %}
+        {% include "includes/rms_inline_error.html" %}
+      {% elif not holiday_items %}
+        <p class="muted" style="margin:0;">Глобальные выходные не найдены.</p>
+      {% else %}
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th class="col-num">№</th>
+                <th>UID</th>
+                <th>Дата</th>
+                <th>Причина</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in holiday_items %}
+                <tr>
+                  <td class="col-num">{{ loop.index }}</td>
+                  <td class="col-mono">{{ row.uid or "-" }}</td>
+                  <td>{{ row.date or "-" }}</td>
+                  <td>{{ row.reason or "—" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <p class="muted" style="margin:10px 0 0 0;">Удаление глобальных выходных пока недоступно: в текущем RMS API нет DELETE-ручки для holiday.</p>
+      {% endif %}
+    </div>
+
     {% if error %}
       {% include "includes/rms_inline_error.html" %}
     {% elif not items %}

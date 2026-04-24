@@ -252,6 +252,80 @@ def _parse_schedule_form_values(form: Dict[str, str]) -> tuple[Optional[Dict[str
     }, None
 
 
+def _fetch_global_holidays_all(client: RMSClient, max_total: int) -> tuple[List[Dict[str, Any]], bool, Optional[str]]:
+    acc: List[Dict[str, Any]] = []
+    cursor: Optional[str] = None
+    truncated = False
+    while len(acc) < max_total:
+        chunk_limit = min(RMS_LIST_PAGE_LIMIT, max_total - len(acc))
+        params: Dict[str, Any] = {"limit": chunk_limit}
+        if cursor:
+            params["cursor"] = cursor
+        resp = client.get("/api/v1/holiday", params=params)
+        if not resp.ok:
+            if resp.status_code in (404, 405):
+                local_rows = _load_global_holidays_local()
+                if local_rows:
+                    return local_rows[:max_total], len(local_rows) > max_total, (
+                        "RMS API не поддерживает чтение holiday (GET /api/v1/holiday); "
+                        "показаны локальные данные из JSON."
+                    )
+                return [], False, (
+                    "RMS API не поддерживает чтение holiday (GET /api/v1/holiday). "
+                    "Доступно только добавление через POST."
+                )
+            return acc, truncated, resp.error
+        payload = resp.data if isinstance(resp.data, dict) else {}
+        data = payload.get("data")
+        chunk = data if isinstance(data, list) else []
+        for row in chunk:
+            if not isinstance(row, dict):
+                continue
+            acc.append(row)
+            if len(acc) >= max_total:
+                truncated = bool(payload.get("has_more"))
+                break
+        if truncated:
+            break
+        if not bool(payload.get("has_more")):
+            break
+        nxt = str(payload.get("cursor") or "").strip()
+        if not nxt:
+            break
+        cursor = nxt
+    if len(acc) >= max_total:
+        truncated = True
+    acc.sort(key=lambda x: str(x.get("date") or ""))
+    return acc, truncated, None
+
+
+def _load_global_holidays_local() -> List[Dict[str, Any]]:
+    path = _JSON_DIR / "hollidays.json"
+    if not path.exists():
+        return []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return []
+    if not isinstance(raw, list):
+        return []
+    rows = [r for r in raw if isinstance(r, dict) and not bool(r.get("is_deleted"))]
+    rows.sort(key=lambda x: str(x.get("date") or ""))
+    return rows
+
+
+def _parse_holiday_form_values(form: Dict[str, str]) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    date_raw = (form.get("holiday_date") or "").strip()
+    reason = (form.get("holiday_reason") or "").strip()
+    if not date_raw:
+        return None, "Укажите дату глобального выходного"
+    try:
+        datetime.strptime(date_raw, "%Y-%m-%d")
+    except ValueError:
+        return None, "Дата должна быть в формате YYYY-MM-DD"
+    return {"date": date_raw, "reason": reason or None}, None
+
+
 def _fetch_replacement_types_all(
     client: RMSClient,
     is_active: bool,
@@ -560,16 +634,24 @@ def replacement_types_delete(uid: str):
 def global_schedule():
     client = RMSClient()
     items, truncated, err = _fetch_global_schedule_all(client, _GLOBAL_SCHEDULE_SCAN_MAX)
+    holiday_items, holidays_truncated, holidays_err = _fetch_global_holidays_all(client, _GLOBAL_SCHEDULE_SCAN_MAX)
     items.sort(key=lambda x: int(x.get("week_day") or 0))
     if not err and truncated:
         err = (
             f"Показаны первые {_GLOBAL_SCHEDULE_SCAN_MAX} строк глобального расписания. "
             "Уточните фильтры на стороне RMS."
         )
+    if not holidays_err and holidays_truncated:
+        holidays_err = (
+            f"Показаны первые {_GLOBAL_SCHEDULE_SCAN_MAX} глобальных выходных. "
+            "Уточните фильтры на стороне RMS."
+        )
     return render_template(
         "dictionaries/global_schedule.html",
         items=items,
         error=err,
+        holiday_items=holiday_items,
+        holidays_error=holidays_err,
         can_create=has_permission("dictionary.global_schedule.create"),
         can_update=has_permission("dictionary.global_schedule.update"),
         can_delete=has_permission("dictionary.global_schedule.delete"),
@@ -611,6 +693,18 @@ def global_schedule_delete(uid: str):
             "error",
         )
     )
+
+
+@bp.post("/global_schedule/holiday/create")
+@require_permission("dictionary.global_schedule.create")
+def global_schedule_holiday_create():
+    holiday_body, err = _parse_holiday_form_values(request.form)
+    if err:
+        return redirect(_redirect_global_schedule(err, "error"))
+    resp = RMSClient().post("/api/v1/holiday", json={"holidays": [holiday_body]})
+    if resp.ok:
+        return redirect(_redirect_global_schedule("Глобальный выходной добавлен", "success"))
+    return redirect(_redirect_global_schedule(resp.error or "Ошибка добавления глобального выходного", "error"))
 
 
 @bp.get("/resource_types")

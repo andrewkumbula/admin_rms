@@ -58,6 +58,7 @@
       {% if can_read_warehouse %}
         <a class="{% if tab == 'warehouses' %}active{% endif %}" href="/service_centers/{{ uid }}?tab=warehouses">Склады</a>
       {% endif %}
+      <a class="{% if tab == 'brand_restrictions' %}active{% endif %}" href="/service_centers/{{ uid }}?tab=brand_restrictions">Бренды (ограничения)</a>
       <a class="{% if tab == 'employees' %}active{% endif %}" href="/service_centers/{{ uid }}?tab=employees">Сотрудники</a>
       <a class="{% if tab == 'equipment' %}active{% endif %}" href="/service_centers/{{ uid }}?tab=equipment">Оборудование</a>
       <a class="{% if tab == 'day_offs' %}active{% endif %}" href="/service_centers/{{ uid }}?tab=day_offs">Выходные</a>
@@ -745,6 +746,97 @@
             </table>
           </div>
         </div>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  {% if tab == "brand_restrictions" %}
+    <div class="card">
+      <h3>Отключение обслуживания бренда в СЦ</h3>
+      <p class="muted">Ограничения из <code>GET /api/v1/service_center/{{ uid }}/brand-restrictions</code>. Тип ограничения на стороне RMS: <code>blacklist</code>.</p>
+      {% if not brand_restriction_items %}
+        <p class="muted">Ограничения брендов не найдены.</p>
+      {% else %}
+        <div data-table-filter-wrap>
+          <div class="table-filter-bar">
+            <label for="tbl-filter-sc-brands">Поиск в таблице</label>
+            <input type="search" id="tbl-filter-sc-brands" data-table-filter placeholder="Бренд, mdm_brand_id, тип…" autocomplete="off" />
+          </div>
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="col-num">№</th>
+                  <th>Бренд</th>
+                  <th>mdm_brand_id</th>
+                  <th>Тип ограничения</th>
+                  <th>Создано</th>
+                  {% if can_manage_brand_restrictions %}<th>Действия</th>{% endif %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in brand_restriction_items %}
+                  <tr>
+                    <td class="col-num">{{ loop.index }}</td>
+                    <td>{{ row.brand_name or "—" }}</td>
+                    <td class="col-mono">{{ row.mdm_brand_id or "—" }}</td>
+                    <td>{{ row.restriction_type or "—" }}</td>
+                    <td>{{ row.created_at or "—" }}</td>
+                    {% if can_manage_brand_restrictions %}
+                      <td>
+                        {% if row.restriction_uid %}
+                          <form
+                            method="post"
+                            action="/service_centers/{{ uid }}/brand_restrictions/{{ row.restriction_uid }}/delete"
+                            onsubmit="return confirm('Удалить ограничение обслуживания бренда?');"
+                          >
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                            <button type="submit" class="btn-secondary">Удалить ограничение</button>
+                          </form>
+                        {% else %}
+                          <span class="muted">—</span>
+                        {% endif %}
+                      </td>
+                    {% endif %}
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+
+    {% if can_manage_brand_restrictions %}
+      <div class="card">
+        <h4>Отключить обслуживание бренда</h4>
+        <p class="muted">Создаёт ограничение через <code>POST /api/v1/service_center/{{ uid }}/brand-restrictions</code>.</p>
+        <form method="post" action="/service_centers/{{ uid }}/brand_restrictions/create">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          {% if brand_options %}
+            <label>Бренд
+              <select name="mdm_brand_id" required style="min-width: 360px; max-width: 100%;">
+                <option value="">— выберите бренд —</option>
+                {% for b in brand_options %}
+                  <option value="{{ b.mdm_brand_id }}">{{ b.label }}</option>
+                {% endfor %}
+              </select>
+            </label>
+          {% else %}
+            <label>mdm_brand_id
+              <input type="text" name="mdm_brand_id" required style="width: 320px; max-width: 100%;" placeholder="Например: 1203" />
+            </label>
+          {% endif %}
+          <button type="submit" style="margin-left:12px;">Отключить</button>
+        </form>
+      </div>
+    {% endif %}
+
+    <div class="card data-pager">
+      {% if brand_restrictions_page.has_more and brand_restrictions_page.next_cursor %}
+        <a href="/service_centers/{{ uid }}?tab=brand_restrictions&amp;brands_cursor={{ brand_restrictions_page.next_cursor|urlencode }}">Следующая страница →</a>
+      {% else %}
+        <span class="muted">Конец списка</span>
       {% endif %}
     </div>
   {% endif %}
