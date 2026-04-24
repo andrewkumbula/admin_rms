@@ -11,8 +11,69 @@ from app.rms_client.client import RMSClient
 
 bp = Blueprint("service_centers", __name__, url_prefix="/service_centers")
 RESOURCE_TYPE_OPTIONS_MAX = 4000
-PROVIDER_CODES = ("ROSSKO", "BERG", "1C", "FORUM_AUTO")
+PROVIDER_CODES = ("ROSSKO", "BERG", "1C", "FORUM_AUTO", "ALFA_AUTO")
 WAREHOUSE_SCAN_MAX_PAGES = 80
+
+
+def _fetch_global_schedule_rows(client: RMSClient) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    cursor: Optional[str] = None
+    max_total = 500
+    while len(rows) < max_total:
+        chunk_limit = min(RMS_LIST_PAGE_LIMIT, max_total - len(rows))
+        params: Dict[str, Any] = {"limit": chunk_limit}
+        if cursor:
+            params["cursor"] = cursor
+        resp = client.get("/api/v1/global_schedule", params=params)
+        if not resp.ok:
+            break
+        payload = resp.data if isinstance(resp.data, dict) else {}
+        data = payload.get("data")
+        chunk = data if isinstance(data, list) else []
+        for row in chunk:
+            if isinstance(row, dict):
+                rows.append(row)
+        if not bool(payload.get("has_more")):
+            break
+        nxt = str(payload.get("cursor") or "").strip()
+        if not nxt:
+            break
+        cursor = nxt
+    rows.sort(key=lambda x: int(x.get("week_day") or 0))
+    return rows
+
+
+def _build_effective_schedule_rows(
+    global_rows: List[Dict[str, Any]], local_rows: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    by_day: Dict[int, Dict[str, Any]] = {}
+    for row in global_rows:
+        try:
+            wd = int(row.get("week_day") or 0)
+        except (TypeError, ValueError):
+            continue
+        if wd < 1 or wd > 7:
+            continue
+        by_day[wd] = {
+            "week_day": wd,
+            "start_time": row.get("start_time") or "",
+            "end_time": row.get("end_time") or "",
+            "source": "Global",
+        }
+    for row in local_rows:
+        try:
+            wd = int(row.get("week_day") or 0)
+        except (TypeError, ValueError):
+            continue
+        if wd < 1 or wd > 7:
+            continue
+        by_day[wd] = {
+            "week_day": wd,
+            "start_time": row.get("start_time") or "",
+            "end_time": row.get("end_time") or "",
+            "source": "Local override",
+        }
+    return [by_day[d] for d in sorted(by_day.keys())]
 
 
 def _redirect_detail(uid: str, tab: str, message: Optional[str] = None, msg_type: str = "info") -> str:
@@ -369,6 +430,10 @@ def detail_page(uid: str):
 
     sc_data = _extract_object(sc_resp.data)
     schedule_items = sc_data.get("schedule") if isinstance(sc_data.get("schedule"), list) else []
+    global_schedule_items: List[Dict[str, Any]] = _fetch_global_schedule_rows(client) if tab == "schedule" else []
+    effective_schedule_items = (
+        _build_effective_schedule_rows(global_schedule_items, schedule_items) if tab == "schedule" else []
+    )
     all_employee_items = _extract_list(
         employees_resp.data, ["service_centers", "employees", "resources", "items"]
     )
@@ -653,6 +718,8 @@ def detail_page(uid: str):
         tab=tab,
         service_center=sc_data,
         schedule_items=schedule_items,
+        global_schedule_items=global_schedule_items,
+        effective_schedule_items=effective_schedule_items,
         employee_items=employee_items,
         equipment_items=equipment_items,
         can_manage_equipment=can_manage_equipment,

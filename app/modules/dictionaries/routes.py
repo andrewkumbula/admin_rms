@@ -1,3 +1,6 @@
+import json
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 
@@ -28,6 +31,8 @@ _TECH_CARD_FILTER_OPTIONS_MAX = 4000
 _TECH_CARD_SCAN_MAX = 20000
 _EXTERNAL_EMPLOYEE_SCAN_MAX = 4000
 _REPLACEMENT_TYPE_SCAN_MAX = 5000
+_GLOBAL_SCHEDULE_SCAN_MAX = 500
+_JSON_DIR = Path(__file__).resolve().parents[2] / "JSON"
 
 
 def _fetch_paginated_top_level(client: RMSClient, path: str, max_total: int) -> List[dict]:
@@ -148,6 +153,105 @@ def _redirect_replacement_types(msg: Optional[str] = None, msg_type: str = "info
     return url_for("dictionaries.replacement_types", **q)
 
 
+def _redirect_global_schedule(msg: Optional[str] = None, msg_type: str = "info") -> str:
+    q: Dict[str, str] = {}
+    if msg:
+        q["gs_msg"] = msg
+        q["gs_msg_type"] = msg_type
+    return url_for("dictionaries.global_schedule", **q)
+
+
+def _fetch_global_schedule_all(
+    client: RMSClient, max_total: int
+) -> tuple[List[Dict[str, Any]], bool, Optional[str]]:
+    acc: List[Dict[str, Any]] = []
+    cursor: Optional[str] = None
+    truncated = False
+    while len(acc) < max_total:
+        chunk_limit = min(RMS_LIST_PAGE_LIMIT, max_total - len(acc))
+        params: Dict[str, Any] = {"limit": chunk_limit}
+        if cursor:
+            params["cursor"] = cursor
+        resp = client.get("/api/v1/global_schedule", params=params)
+        if not resp.ok:
+            if resp.status_code == 405:
+                local_rows = _load_global_schedule_local()
+                if local_rows:
+                    return local_rows[:max_total], len(local_rows) > max_total, (
+                        "RMS API не поддерживает GET /api/v1/global_schedule; "
+                        "показаны локальные данные из JSON."
+                    )
+                return [], False, (
+                    "RMS API не поддерживает чтение global schedule (GET /api/v1/global_schedule). "
+                    "Доступны только операции create/update."
+                )
+            if resp.status_code == 404:
+                return acc, truncated, None
+            return acc, truncated, resp.error
+        payload = resp.data if isinstance(resp.data, dict) else {}
+        data = payload.get("data")
+        chunk = data if isinstance(data, list) else []
+        for row in chunk:
+            if not isinstance(row, dict):
+                continue
+            acc.append(row)
+            if len(acc) >= max_total:
+                truncated = bool(payload.get("has_more"))
+                break
+        if truncated:
+            break
+        if not bool(payload.get("has_more")):
+            break
+        nxt = str(payload.get("cursor") or "").strip()
+        if not nxt:
+            break
+        cursor = nxt
+    if len(acc) >= max_total:
+        truncated = True
+    return acc, truncated, None
+
+
+def _load_global_schedule_local() -> List[Dict[str, Any]]:
+    path = _JSON_DIR / "global_schedules.json"
+    if not path.exists():
+        return []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return []
+    if not isinstance(raw, list):
+        return []
+    rows = [r for r in raw if isinstance(r, dict)]
+    rows.sort(key=lambda x: int(x.get("week_day") or 0))
+    return rows
+
+
+def _parse_schedule_form_values(form: Dict[str, str]) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    week_day_raw = (form.get("week_day") or "").strip()
+    start_time = (form.get("start_time") or "").strip()
+    end_time = (form.get("end_time") or "").strip()
+    if not week_day_raw or not start_time or not end_time:
+        return None, "Заполните день недели, начало и конец"
+    try:
+        week_day = int(week_day_raw)
+    except ValueError:
+        return None, "День недели должен быть целым числом от 1 до 7"
+    if week_day < 1 or week_day > 7:
+        return None, "День недели должен быть в диапазоне 1..7"
+    try:
+        start_dt = datetime.strptime(start_time, "%H:%M")
+        end_dt = datetime.strptime(end_time, "%H:%M")
+    except ValueError:
+        return None, "Формат времени должен быть HH:MM"
+    if start_dt >= end_dt:
+        return None, "Время начала должно быть раньше времени окончания"
+    return {
+        "week_day": week_day,
+        "start_time": f"{start_time}:00",
+        "end_time": f"{end_time}:00",
+    }, None
+
+
 def _fetch_replacement_types_all(
     client: RMSClient,
     is_active: bool,
@@ -203,6 +307,7 @@ def _fetch_tech_cards_all_pages(
     client: RMSClient,
     brand_uid: str,
     work_uid: str,
+    search_text: str,
     max_total: int,
 ) -> tuple[List[dict], bool, Optional[str]]:
     """
@@ -212,6 +317,7 @@ def _fetch_tech_cards_all_pages(
     acc: List[dict] = []
     cursor: Optional[str] = None
     truncated = False
+    search_norm = search_text.casefold()
     while len(acc) < max_total:
         chunk_limit = min(RMS_LIST_PAGE_LIMIT, max_total - len(acc))
         params: dict[str, Any] = {"limit": chunk_limit}
@@ -234,6 +340,17 @@ def _fetch_tech_cards_all_pages(
                 continue
             if work_uid and row_work != work_uid:
                 continue
+            if search_norm:
+                haystack = " ".join(
+                    [
+                        str(row.get("work_name") or row.get("name") or ""),
+                        str(row.get("brand_name") or ""),
+                        row_work,
+                        row_brand,
+                    ]
+                ).casefold()
+                if search_norm not in haystack:
+                    continue
             acc.append(row)
             if len(acc) >= max_total:
                 truncated = bool(payload.get("has_more"))
@@ -438,6 +555,64 @@ def replacement_types_delete(uid: str):
     return redirect(_redirect_replacement_types(resp.error or "Ошибка удаления связи", "error"))
 
 
+@bp.get("/global_schedule")
+@require_permission("dictionary.global_schedule.read")
+def global_schedule():
+    client = RMSClient()
+    items, truncated, err = _fetch_global_schedule_all(client, _GLOBAL_SCHEDULE_SCAN_MAX)
+    items.sort(key=lambda x: int(x.get("week_day") or 0))
+    if not err and truncated:
+        err = (
+            f"Показаны первые {_GLOBAL_SCHEDULE_SCAN_MAX} строк глобального расписания. "
+            "Уточните фильтры на стороне RMS."
+        )
+    return render_template(
+        "dictionaries/global_schedule.html",
+        items=items,
+        error=err,
+        can_create=has_permission("dictionary.global_schedule.create"),
+        can_update=has_permission("dictionary.global_schedule.update"),
+        can_delete=has_permission("dictionary.global_schedule.delete"),
+        gs_msg=request.args.get("gs_msg"),
+        gs_msg_type=request.args.get("gs_msg_type") or "info",
+    )
+
+
+@bp.post("/global_schedule/create")
+@require_permission("dictionary.global_schedule.create")
+def global_schedule_create():
+    body, err = _parse_schedule_form_values(request.form)
+    if err:
+        return redirect(_redirect_global_schedule(err, "error"))
+    resp = RMSClient().post("/api/v1/global_schedule", json={"schedule": [body], "holidays": []})
+    if resp.ok:
+        return redirect(_redirect_global_schedule("Строка глобального расписания создана", "success"))
+    return redirect(_redirect_global_schedule(resp.error or "Ошибка создания строки", "error"))
+
+
+@bp.post("/global_schedule/<uid>/patch")
+@require_permission("dictionary.global_schedule.update")
+def global_schedule_patch(uid: str):
+    body, err = _parse_schedule_form_values(request.form)
+    if err:
+        return redirect(_redirect_global_schedule(err, "error"))
+    resp = RMSClient().patch("/api/v1/global_schedule", json={"schedule": [body]})
+    if resp.ok:
+        return redirect(_redirect_global_schedule("Строка глобального расписания обновлена", "success"))
+    return redirect(_redirect_global_schedule(resp.error or "Ошибка обновления строки", "error"))
+
+
+@bp.post("/global_schedule/<uid>/delete")
+@require_permission("dictionary.global_schedule.delete")
+def global_schedule_delete(uid: str):
+    return redirect(
+        _redirect_global_schedule(
+            "RMS API не поддерживает удаление global schedule (DELETE). Используйте обновление расписания.",
+            "error",
+        )
+    )
+
+
 @bp.get("/resource_types")
 @require_permission("dictionary.resource_type.read")
 def resource_types():
@@ -584,13 +759,15 @@ def tech_cards():
     cursor = (request.args.get("cursor") or "").strip()
     brand_uid = (request.args.get("brand_uid") or "").strip()
     work_uid = (request.args.get("work_uid") or "").strip()
+    search_q = (request.args.get("search") or "").strip()
 
     client = RMSClient()
-    if brand_uid or work_uid:
+    if brand_uid or work_uid or search_q:
         items, truncated, local_error = _fetch_tech_cards_all_pages(
             client,
             brand_uid=brand_uid,
             work_uid=work_uid,
+            search_text=search_q,
             max_total=_TECH_CARD_SCAN_MAX,
         )
         meta = {"next_cursor": "", "has_more": False}
@@ -620,6 +797,7 @@ def tech_cards():
         work_options=work_options,
         selected_brand_uid=brand_uid,
         selected_work_uid=work_uid,
+        selected_search=search_q,
         selected_brand_label=_label_for_uid(brand_options, brand_uid),
         selected_work_label=_label_for_uid(work_options, work_uid),
         can_create=has_permission("dictionary.tech_card.read"),

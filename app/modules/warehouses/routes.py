@@ -10,7 +10,7 @@ from app.service_center_catalog import fetch_service_center_options, label_for_s
 
 bp = Blueprint("warehouses", __name__, url_prefix="/warehouses")
 
-SYSTEM_NAMES = ("ROSSKO", "BERG", "1C", "FORUM_AUTO")
+SYSTEM_NAMES = ("ROSSKO", "BERG", "1C", "FORUM_AUTO", "ALFA_AUTO")
 
 # Подписи в UI (значения API / URL — латиница из SystemNameEnum)
 PROVIDER_LABELS: Dict[str, str] = {
@@ -18,6 +18,7 @@ PROVIDER_LABELS: Dict[str, str] = {
     "BERG": "BERG",
     "1C": "1С",
     "FORUM_AUTO": "FORUM_AUTO",
+    "ALFA_AUTO": "ALFA_AUTO",
 }
 
 _MAX_SCAN_PAGES = 80

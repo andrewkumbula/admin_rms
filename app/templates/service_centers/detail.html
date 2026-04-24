@@ -190,6 +190,39 @@
 
   {% if tab == "schedule" %}
     <div class="card">
+      <h3>Итоговое расписание (global + local override)</h3>
+      <p class="muted">Базой выступает глобальное расписание. Если для дня недели есть локальная строка СЦ, она переопределяет глобальную.</p>
+      {% if not effective_schedule_items %}
+        <p class="muted">Итоговое расписание не найдено.</p>
+      {% else %}
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th class="col-num">№</th>
+                <th>День (1–Пн … 7–Вс)</th>
+                <th>Начало</th>
+                <th>Конец</th>
+                <th>Источник</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in effective_schedule_items %}
+                <tr>
+                  <td class="col-num">{{ loop.index }}</td>
+                  <td>{{ row.week_day or "-" }}</td>
+                  <td>{{ row.start_time or "-" }}</td>
+                  <td>{{ row.end_time or "-" }}</td>
+                  <td>{{ row.source or "-" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% endif %}
+    </div>
+
+    <div class="card">
       <h3>Расписание (неделя)</h3>
       <p class="muted">Данные из карточки СЦ. Удаление по UUID — если известен идентификатор строки расписания в RMS.</p>
       {% if not schedule_items %}

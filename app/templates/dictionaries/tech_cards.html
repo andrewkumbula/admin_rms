@@ -127,6 +127,18 @@
               <ul class="tc-combobox-dropdown" id="tc-work-list" role="listbox" hidden></ul>
             </div>
           </div>
+          <div style="width:100%; max-width:520px;">
+            <label for="tc-global-search" style="font-weight:600;">Текстовый поиск по всем страницам</label>
+            <input
+              type="search"
+              id="tc-global-search"
+              name="search"
+              class="tc-combobox-in"
+              value="{{ selected_search or '' }}"
+              placeholder="Работа / бренд / UID"
+              autocomplete="off"
+            />
+          </div>
           <div class="tc-filter-actions">
             <button type="submit">Применить фильтры</button>
             <a class="btn-secondary" href="/dictionaries/tech_cards" style="display:inline-block; text-decoration:none; line-height:1.2;">Сбросить</a>
@@ -142,7 +154,7 @@
     {% else %}
       <div class="card data-table-card" id="tc-table-wrap">
         <div class="table-filter-bar">
-          <label for="tbl-filter-tc">Поиск в загруженной странице</label>
+          <label for="tbl-filter-tc">Быстрый поиск в текущем результате</label>
           <input type="search" id="tbl-filter-tc" placeholder="Текст по колонкам текущей страницы…" autocomplete="off" />
         </div>
         <div class="data-table-wrap">
@@ -199,7 +211,7 @@
     <div class="card data-pager">
       {% if page.has_more and page.next_cursor %}
         <a
-          href="/dictionaries/tech_cards?cursor={{ page.next_cursor|urlencode }}{% if selected_brand_uid %}&amp;brand_uid={{ selected_brand_uid|urlencode }}{% endif %}{% if selected_work_uid %}&amp;work_uid={{ selected_work_uid|urlencode }}{% endif %}"
+          href="/dictionaries/tech_cards?cursor={{ page.next_cursor|urlencode }}{% if selected_brand_uid %}&amp;brand_uid={{ selected_brand_uid|urlencode }}{% endif %}{% if selected_work_uid %}&amp;work_uid={{ selected_work_uid|urlencode }}{% endif %}{% if selected_search %}&amp;search={{ selected_search|urlencode }}{% endif %}"
         >Следующая страница →</a>
       {% else %}
         <span class="muted">Конец списка</span>
