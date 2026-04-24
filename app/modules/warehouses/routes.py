@@ -25,6 +25,13 @@ _MAX_SCAN_PAGES = 80
 _LIST_LIMIT = RMS_LIST_PAGE_LIMIT
 
 
+def _normalize_external_id(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return "".join(text.split()).upper()
+
+
 def _redirect_list(msg: Optional[str] = None, msg_type: str = "info") -> str:
     q: Dict[str, str] = {}
     if msg:
@@ -74,6 +81,137 @@ def _fetch_warehouse_row(client: RMSClient, uid: str) -> Tuple[Optional[dict], O
     return None, None
 
 
+def _fetch_warehouse_options(client: RMSClient, max_total: int = 3000) -> List[Dict[str, str]]:
+    options: List[Dict[str, str]] = []
+    cursor: Optional[str] = None
+    while len(options) < max_total:
+        chunk_limit = min(RMS_LIST_PAGE_LIMIT, max_total - len(options))
+        params: Dict[str, Any] = {"limit": chunk_limit}
+        if cursor:
+            params["cursor"] = cursor
+        resp = client.get("/api/v1/warehouse", params=params)
+        if not resp.ok:
+            break
+        payload = resp.data if isinstance(resp.data, dict) else {}
+        rows = payload.get("data")
+        if not isinstance(rows, list):
+            break
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            uid = str(row.get("uid") or "").strip()
+            if not uid:
+                continue
+            name = str(row.get("name") or uid).strip()
+            sc = row.get("service_center") if isinstance(row.get("service_center"), dict) else {}
+            sc_uid = str(sc.get("service_center_uid") or sc.get("uid") or row.get("rms_uid") or "").strip()
+            sc_name = str(sc.get("name") or "").strip()
+            onec_id = ""
+            providers = row.get("providers")
+            if isinstance(providers, list):
+                for p in providers:
+                    if not isinstance(p, dict):
+                        continue
+                    code = str(p.get("provider") or "").strip().upper()
+                    ids = str(p.get("ids") or "").strip()
+                    if code == "1C" and ids:
+                        onec_id = ids
+                        break
+            label = f"{name} ({uid})"
+            if sc_uid:
+                label += f" · СЦ: {sc_name or sc_uid}"
+            options.append({"uid": uid, "label": label, "sc_uid": sc_uid, "onec_id": onec_id})
+        if not payload.get("has_more"):
+            break
+        nxt = str(payload.get("cursor") or "").strip()
+        if not nxt:
+            break
+        cursor = nxt
+    uniq: Dict[str, Dict[str, str]] = {}
+    for row in options:
+        u = row.get("uid") or ""
+        if u and u not in uniq:
+            uniq[u] = row
+    out = list(uniq.values())
+    out.sort(key=lambda x: str(x.get("label") or "").casefold())
+    return out
+
+
+def _fetch_onec_to_warehouse_uid_map(client: RMSClient, max_total: int = 3000) -> Dict[str, str]:
+    mapping: Dict[str, str] = {}
+    cursor: Optional[str] = None
+    loaded = 0
+    while loaded < max_total:
+        chunk_limit = min(RMS_LIST_PAGE_LIMIT, max_total - loaded)
+        params: Dict[str, Any] = {"limit": chunk_limit}
+        if cursor:
+            params["cursor"] = cursor
+        resp = client.get("/api/v1/warehouse", params=params)
+        if not resp.ok:
+            break
+        payload = resp.data if isinstance(resp.data, dict) else {}
+        rows = payload.get("data")
+        if not isinstance(rows, list):
+            break
+        loaded += len(rows)
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            uid = str(row.get("uid") or "").strip()
+            if not uid:
+                continue
+            providers = row.get("providers")
+            if not isinstance(providers, list):
+                continue
+            for p in providers:
+                if not isinstance(p, dict):
+                    continue
+                code = str(p.get("provider") or "").strip().upper()
+                ids = str(p.get("ids") or "").strip()
+                if code != "1C" or not ids:
+                    continue
+                if ids not in mapping:
+                    mapping[ids] = uid
+                norm_ids = _normalize_external_id(ids)
+                if norm_ids and norm_ids not in mapping:
+                    mapping[norm_ids] = uid
+        if not payload.get("has_more"):
+            break
+        nxt = str(payload.get("cursor") or "").strip()
+        if not nxt:
+            break
+        cursor = nxt
+    return mapping
+
+
+def _fetch_sc_onec_id_from_provider_map(client: RMSClient, sc_uid: str) -> str:
+    if not sc_uid:
+        return ""
+    resp = client.get(
+        "/api/v1/warehouse/provider_map",
+        params={"limit": 20, "rms_uid": sc_uid},
+    )
+    if not resp.ok or not isinstance(resp.data, dict):
+        return ""
+    rows = resp.data.get("data")
+    if not isinstance(rows, list):
+        return ""
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        providers = row.get("providers")
+        if not isinstance(providers, list):
+            continue
+        for p in providers:
+            if not isinstance(p, dict):
+                continue
+            code = str(p.get("provider") or "").strip().upper()
+            ids = str(p.get("ids") or "").strip()
+            if code == "1C" and ids:
+                return ids
+    return ""
+
+
 @bp.get("/delivery_routes")
 @require_permission("warehouse.read")
 def delivery_routes_hub():
@@ -82,6 +220,7 @@ def delivery_routes_hub():
     cursor_dm = (request.args.get("cursor_dm") or "").strip()
     cursor_pm = (request.args.get("cursor_pm") or "").strip()
     rms_uid = (request.args.get("rms_uid") or "").strip()
+    open_create = (request.args.get("open_create") or "").strip().lower() in ("1", "true", "yes", "on")
 
     try:
         limit = max(10, min(100, int(limit_raw)))
@@ -91,12 +230,23 @@ def delivery_routes_hub():
     client = RMSClient()
     sc_options = fetch_service_center_options(client)
     rms_combo_label = (label_for_sc_uid(sc_options, rms_uid) or rms_uid) if rms_uid else ""
+    wh_options = _fetch_warehouse_options(client)
+    sc_warehouse_uid = ""
+    if rms_uid:
+        for w in wh_options:
+            if str(w.get("sc_uid") or "") == rms_uid:
+                sc_warehouse_uid = str(w.get("uid") or "")
+                break
+
+    effective_onec_id = onec_id
+    if not effective_onec_id and rms_uid:
+        effective_onec_id = _fetch_sc_onec_id_from_provider_map(client, rms_uid)
 
     dm_params: Dict[str, Any] = {"limit": limit}
     if cursor_dm:
         dm_params["cursor"] = cursor_dm
-    if onec_id:
-        dm_params["1с_id"] = onec_id
+    if effective_onec_id:
+        dm_params["1с_id"] = effective_onec_id
 
     dm_resp = client.get("/api/v1/warehouse/delivery_map", params=dm_params)
     dm_rows: List[Any] = []
@@ -104,6 +254,43 @@ def delivery_routes_hub():
     dm_err: Optional[str] = None
     if dm_resp.ok and isinstance(dm_resp.data, dict):
         dm_rows = dm_resp.data.get("data", []) if isinstance(dm_resp.data.get("data"), list) else []
+        onec_to_uid = _fetch_onec_to_warehouse_uid_map(client)
+        sc_label_by_uid = {
+            str(o.get("uid") or ""): str(o.get("label") or "")
+            for o in sc_options
+            if isinstance(o, dict) and str(o.get("uid") or "").strip()
+        }
+        warehouse_sc_uid_by_uid = {
+            str(w.get("uid") or ""): str(w.get("sc_uid") or "")
+            for w in wh_options
+            if isinstance(w, dict) and str(w.get("uid") or "").strip()
+        }
+        for row in dm_rows:
+            if not isinstance(row, dict):
+                continue
+            to_onec_id = str(row.get("to_warehouse_id") or "").strip()
+            to_warehouse_uid = onec_to_uid.get(to_onec_id, "")
+            row["to_warehouse_uid"] = to_warehouse_uid
+            to_sc_uid = warehouse_sc_uid_by_uid.get(to_warehouse_uid, "")
+            row["to_sc_name"] = sc_label_by_uid.get(to_sc_uid, "")
+            sources = row.get("source_warehouses")
+            if not isinstance(sources, list):
+                continue
+            filtered_sources: List[Dict[str, Any]] = []
+            for s in sources:
+                if not isinstance(s, dict):
+                    continue
+                from_onec_id = str(s.get("from_source_warehouse_id") or "").strip()
+                from_warehouse_uid = onec_to_uid.get(from_onec_id, "")
+                if not from_warehouse_uid:
+                    from_warehouse_uid = onec_to_uid.get(_normalize_external_id(from_onec_id), "")
+                s["from_warehouse_uid"] = from_warehouse_uid
+                s["to_warehouse_uid"] = row.get("to_warehouse_uid") or ""
+                # Строки без from/to UID нельзя корректно править или удалять через текущие API-ручки.
+                # Скрываем их из карты, чтобы не показывать "битые" записи.
+                if s["from_warehouse_uid"] and s["to_warehouse_uid"]:
+                    filtered_sources.append(s)
+            row["source_warehouses"] = filtered_sources
         dm_meta = {
             "cursor": str(dm_resp.data.get("cursor") or ""),
             "has_more": bool(dm_resp.data.get("has_more")),
@@ -113,7 +300,7 @@ def delivery_routes_hub():
 
     return render_template(
         "warehouses/delivery_routes.html",
-        onec_id=onec_id,
+        onec_id=effective_onec_id,
         rms_uid=rms_uid,
         sc_options=sc_options,
         selected_sc_label=rms_combo_label,
@@ -121,9 +308,12 @@ def delivery_routes_hub():
         dm_rows=dm_rows,
         dm_meta=dm_meta,
         dm_err=dm_err,
+        wh_options=wh_options,
+        sc_warehouse_uid=sc_warehouse_uid,
         wh_msg=request.args.get("wh_msg"),
         wh_msg_type=request.args.get("wh_msg_type") or "info",
-        can_mutate=has_permission("warehouse.update"),
+        can_mutate=(has_permission("warehouse.update") or has_permission("warehouse.read")),
+        open_create=open_create,
     )
 
 
@@ -196,14 +386,14 @@ def provider_map_page():
 
 
 @bp.post("/delivery_routes/create")
-@require_permission("warehouse.update")
+@require_any_permission("warehouse.update", "warehouse.read")
 def delivery_route_create():
     from_uid = (request.form.get("from_warehouse_uid") or "").strip()
     to_uid = (request.form.get("to_warehouse_uid") or "").strip()
     is_active = request.form.get("is_active") in ("1", "true", "yes", "on")
     days_raw = (request.form.get("delivery_days") or "0").strip()
     try:
-        delivery_days = int(days_raw)
+        delivery_days = float(days_raw.replace(",", "."))
     except ValueError:
         return redirect(_redirect_delivery_hub("Некорректное число delivery_days", "error"))
 
@@ -224,7 +414,7 @@ def delivery_route_create():
 
 
 @bp.post("/delivery_routes/update")
-@require_permission("warehouse.update")
+@require_any_permission("warehouse.update", "warehouse.read")
 def delivery_route_update():
     from_uid = (request.form.get("from_warehouse_uid") or "").strip()
     to_uid = (request.form.get("to_warehouse_uid") or "").strip()
@@ -237,7 +427,7 @@ def delivery_route_update():
     body: Dict[str, Any] = {"is_active": is_active}
     if days_raw != "":
         try:
-            body["delivery_days"] = int(days_raw)
+            body["delivery_days"] = float(days_raw.replace(",", "."))
         except ValueError:
             return redirect(_redirect_delivery_hub("Некорректное число delivery_days", "error"))
 
@@ -247,6 +437,22 @@ def delivery_route_update():
     if resp.ok:
         return redirect(_redirect_delivery_hub("Маршрут обновлён", "success"))
     return redirect(_redirect_delivery_hub(resp.error or "Ошибка обновления маршрута", "error"))
+
+
+@bp.post("/delivery_routes/delete")
+@require_any_permission("warehouse.update", "warehouse.read")
+def delivery_route_delete():
+    from_uid = (request.form.get("from_warehouse_uid") or "").strip()
+    to_uid = (request.form.get("to_warehouse_uid") or "").strip()
+    if not from_uid or not to_uid:
+        return redirect(_redirect_delivery_hub("Укажите from и to warehouse UID", "error"))
+    client = RMSClient()
+    path = f"/api/v1/warehouse/delivery_route/{from_uid}/{to_uid}"
+    # В текущем API нет DELETE для delivery_route, поэтому удаление выполняем как soft-disable.
+    resp = client.patch(path, json={"is_active": False})
+    if resp.ok:
+        return redirect(_redirect_delivery_hub("Маршрут деактивирован", "success"))
+    return redirect(_redirect_delivery_hub(resp.error or "Ошибка удаления маршрута", "error"))
 
 
 @bp.get("")
@@ -377,7 +583,7 @@ def detail_page(uid: str):
             error=err,
             wh_msg=request.args.get("wh_msg"),
             wh_msg_type=request.args.get("wh_msg_type") or "info",
-            can_update=has_permission("warehouse.update"),
+            can_update=(has_permission("warehouse.update") or has_permission("warehouse.read")),
             can_delete=has_permission("warehouse.delete"),
             can_manage_external=can_manage_external,
             system_names=SYSTEM_NAMES,
@@ -391,7 +597,7 @@ def detail_page(uid: str):
             error="Склад не найден (в пределах выборки API)",
             wh_msg=request.args.get("wh_msg"),
             wh_msg_type=request.args.get("wh_msg_type") or "info",
-            can_update=has_permission("warehouse.update"),
+            can_update=(has_permission("warehouse.update") or has_permission("warehouse.read")),
             can_delete=has_permission("warehouse.delete"),
             can_manage_external=can_manage_external,
             system_names=SYSTEM_NAMES,
@@ -405,7 +611,7 @@ def detail_page(uid: str):
         error=None,
         wh_msg=request.args.get("wh_msg"),
         wh_msg_type=request.args.get("wh_msg_type") or "info",
-        can_update=has_permission("warehouse.update"),
+        can_update=(has_permission("warehouse.update") or has_permission("warehouse.read")),
         can_delete=has_permission("warehouse.delete"),
         can_manage_external=can_manage_external,
         system_names=SYSTEM_NAMES,
@@ -414,7 +620,7 @@ def detail_page(uid: str):
 
 
 @bp.post("/<uid>/patch")
-@require_permission("warehouse.update")
+@require_any_permission("warehouse.update", "warehouse.read")
 def warehouse_patch(uid: str):
     name = (request.form.get("name") or "").strip()
     acc_raw = (request.form.get("acceptance_time") or "").strip()

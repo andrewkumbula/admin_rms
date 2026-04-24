@@ -20,7 +20,7 @@
       <div style="min-width: 260px">
         {% set suffix = "whd" %}
         {% set hidden_name = "rms_uid" %}
-        {% set field_label = "Сервисный центр (rms_uid, фильтр provider_map)" %}
+        {% set field_label = "Сервисный центр (фильтр карты доставки и provider_map)" %}
         {% set options = sc_options %}
         {% set selected_uid = rms_uid %}
         {% set selected_label = selected_sc_label|default('') %}
@@ -34,6 +34,9 @@
       </label>
       <button type="submit">Показать</button>
     </form>
+    <p class="muted" style="margin:8px 0 0 0;">
+      Если выбран СЦ, система автоматически использует его <code>1с_id</code> для фильтрации карты доставки.
+    </p>
   </div>
 
   <div class="card">
@@ -48,7 +51,40 @@
       {% for row in dm_rows %}
         <div style="margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid #e5e7eb;">
           <p><strong>to_warehouse_id (1С):</strong> {{ row.to_warehouse_id or "—" }}</p>
+          <p><strong>СЦ:</strong> {{ row.to_sc_name or "—" }}</p>
           <p><strong>address:</strong> {{ row.address or "—" }}</p>
+          {% if can_mutate %}
+            <div style="margin:8px 0 12px 0; padding:10px; border:1px dashed var(--border); border-radius:8px;">
+              <p style="margin:0 0 8px 0;"><strong>Создать маршрут до этого склада</strong></p>
+              {% if row.to_warehouse_uid %}
+                <form method="post" action="/warehouses/delivery_routes/create" style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                  <input type="hidden" name="to_warehouse_uid" value="{{ row.to_warehouse_uid }}" />
+                  <label>from_warehouse_uid (склад-источник)<br />
+                    <select name="from_warehouse_uid" required style="min-width:320px; max-width:100%;">
+                      <option value="">— выберите склад-источник —</option>
+                      {% for w in wh_options %}
+                        {% if w.uid != row.to_warehouse_uid and w.onec_id %}
+                          <option value="{{ w.uid }}">{{ w.label }}</option>
+                        {% endif %}
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <label>delivery_days<br />
+                    <input name="delivery_days" type="number" value="0" step="0.5" required style="width:100px;" />
+                  </label>
+                  <label style="display:inline-flex; align-items:center; gap:6px;">
+                    <input type="checkbox" name="is_active" value="true" checked />
+                    <span>is_active</span>
+                  </label>
+                  <button type="submit">Создать маршрут</button>
+                </form>
+                <p class="muted" style="margin:6px 0 0 0;">Показываются только склады-источники с привязанным внешним ID системы 1С.</p>
+              {% else %}
+                <p class="muted" style="margin:0;">Невозможно предзаполнить склад-получатель (не найден UID).</p>
+              {% endif %}
+            </div>
+          {% endif %}
           {% if row.source_warehouses %}
             <div data-table-filter-wrap style="margin-top:8px;">
             <div class="table-filter-bar">
@@ -63,15 +99,61 @@
                   <th>from (1С)</th>
                   <th>Адрес источника</th>
                   <th>delivery_days*</th>
+                  {% if can_mutate %}<th>Действия</th>{% endif %}
                 </tr>
               </thead>
               <tbody>
                 {% for s in row.source_warehouses %}
-                  <tr>
+                  <tr class="dm-edit-row">
+                    {% set dm_form_id = "dm-edit-form-" ~ loop.index ~ "-" ~ s.from_warehouse_uid ~ "-" ~ s.to_warehouse_uid %}
                     <td class="col-num">{{ loop.index }}</td>
                     <td class="col-mono">{{ s.from_source_warehouse_id or "—" }}</td>
                     <td class="col-addr">{{ s.source_warehouse_address or "—" }}</td>
-                    <td>{{ s.delivery_days }}</td>
+                    <td>
+                      <span class="dm-days-text">{{ s.delivery_days }}</span>
+                      <input
+                        type="number"
+                        name="delivery_days"
+                        value="{{ s.delivery_days }}"
+                        step="0.5"
+                        style="width:88px;"
+                        title="Новый срок, дней"
+                        class="dm-edit-days"
+                        form="{{ dm_form_id }}"
+                        hidden
+                      />
+                    </td>
+                    {% if can_mutate %}
+                      <td style="white-space:nowrap;">
+                        {% if s.from_warehouse_uid and s.to_warehouse_uid %}
+                          <form id="{{ dm_form_id }}" method="post" action="/warehouses/delivery_routes/update" class="dm-edit-form" style="display:inline-flex; gap:6px; align-items:center;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                            <input type="hidden" name="from_warehouse_uid" value="{{ s.from_warehouse_uid }}" />
+                            <input type="hidden" name="to_warehouse_uid" value="{{ s.to_warehouse_uid }}" />
+                            <button type="button" class="btn-secondary dm-edit-toggle">Изменить</button>
+                            <label class="dm-edit-active-wrap" style="align-items:center; gap:4px;" hidden>
+                              <input type="checkbox" name="is_active" value="true" checked class="dm-edit-active" />
+                              <span class="muted">active</span>
+                            </label>
+                            <button type="submit" class="btn-secondary dm-edit-save" hidden>Сохранить</button>
+                            <button type="button" class="btn-secondary dm-edit-cancel" hidden>Отмена</button>
+                          </form>
+                          <form
+                            method="post"
+                            action="/warehouses/delivery_routes/delete"
+                            style="display:inline-block; margin-left:8px;"
+                            onsubmit="return confirm('Удалить маршрут (деактивировать)?');"
+                          >
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                            <input type="hidden" name="from_warehouse_uid" value="{{ s.from_warehouse_uid }}" />
+                            <input type="hidden" name="to_warehouse_uid" value="{{ s.to_warehouse_uid }}" />
+                            <button type="submit" class="btn-secondary">Удалить</button>
+                          </form>
+                        {% else %}
+                          <span class="muted">Нет UID для правки</span>
+                        {% endif %}
+                      </td>
+                    {% endif %}
                   </tr>
                 {% endfor %}
               </tbody>
@@ -83,7 +165,7 @@
           {% endif %}
         </div>
       {% endfor %}
-      <p class="muted">* Расчёт сроков в RMS (в т.ч. acceptance_time, порог 14:00 МСК, −1 для «тот же СЦ»).</p>
+      <p class="muted">* Расчёт сроков в RMS: только время доставки (delivery_days), порог 14:00 МСК, −1 для «тот же СЦ».</p>
       {% if dm_meta.has_more and dm_meta.cursor %}
         <form method="get" action="/warehouses/delivery_routes" style="display:inline;">
           <input type="hidden" name="onec_id" value="{{ onec_id }}" />
@@ -105,60 +187,48 @@
     <a class="btn-secondary" style="display:inline-block; text-decoration:none;" href="/warehouses/provider_map">Открыть карту провайдеров</a>
   </div>
 
+  <div class="card">
+    <h2 style="margin-top:0;">Как смотреть срок доставки до СЦ</h2>
+    <p class="muted" style="margin:0;">
+      1) Выберите СЦ в фильтре выше.<br />
+      2) В блоке «Карта доставки» смотрите все источники и <code>delivery_days</code> до склада выбранного СЦ.<br />
+      3) Для добавления нового перемещения создайте маршрут, где <code>to_warehouse_uid</code> — склад выбранного СЦ.
+    </p>
+  </div>
   {% if can_mutate %}
-    <div class="card">
-      <h2 style="margin-top:0;">Создать маршрут</h2>
-      <p class="muted"><code>POST /api/v1/warehouse/delivery_route</code></p>
-      <form method="post" action="/warehouses/delivery_routes/create">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
-        <p>
-          <label>from_warehouse_uid<br />
-            <input name="from_warehouse_uid" type="text" required style="width:100%; max-width:420px;" placeholder="UUID склада-источника" />
-          </label>
-        </p>
-        <p>
-          <label>to_warehouse_uid<br />
-            <input name="to_warehouse_uid" type="text" required style="width:100%; max-width:420px;" placeholder="UUID склада-получателя" />
-          </label>
-        </p>
-        <p>
-          <label>delivery_days<br />
-            <input name="delivery_days" type="number" value="0" required style="width:100px;" />
-          </label>
-        </p>
-        <p>
-          <label><input type="checkbox" name="is_active" value="true" checked /> is_active</label>
-        </p>
-        <button type="submit">Создать</button>
-      </form>
-    </div>
-
-    <div class="card">
-      <h2 style="margin-top:0;">Изменить маршрут</h2>
-      <p class="muted"><code>PATCH /api/v1/warehouse/delivery_route/{from_uid}/{to_uid}</code></p>
-      <form method="post" action="/warehouses/delivery_routes/update">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
-        <p>
-          <label>from_warehouse_uid<br />
-            <input name="from_warehouse_uid" type="text" required style="width:100%; max-width:420px;" />
-          </label>
-        </p>
-        <p>
-          <label>to_warehouse_uid<br />
-            <input name="to_warehouse_uid" type="text" required style="width:100%; max-width:420px;" />
-          </label>
-        </p>
-        <p>
-          <label>delivery_days (пусто = не менять)<br />
-            <input name="delivery_days" type="number" style="width:100px;" />
-          </label>
-        </p>
-        <p>
-          <label><input type="checkbox" name="is_active" value="true" checked /> is_active</label>
-        </p>
-        <button type="submit">Обновить</button>
-      </form>
-    </div>
+    <script>
+      (function () {
+        var forms = document.querySelectorAll(".dm-edit-form");
+        forms.forEach(function (form) {
+          var row = form.closest(".dm-edit-row");
+          var daysText = row ? row.querySelector(".dm-days-text") : null;
+          var toggle = form.querySelector(".dm-edit-toggle");
+          var days = row ? row.querySelector(".dm-edit-days") : null;
+          var activeWrap = form.querySelector(".dm-edit-active-wrap");
+          var save = form.querySelector(".dm-edit-save");
+          var cancel = form.querySelector(".dm-edit-cancel");
+          if (!toggle || !days || !save || !cancel) return;
+          toggle.addEventListener("click", function () {
+            if (daysText) daysText.hidden = true;
+            days.hidden = false;
+            if (activeWrap) activeWrap.hidden = false;
+            save.hidden = false;
+            cancel.hidden = false;
+            toggle.hidden = true;
+            days.focus();
+            days.select();
+          });
+          cancel.addEventListener("click", function () {
+            if (daysText) daysText.hidden = false;
+            days.hidden = true;
+            if (activeWrap) activeWrap.hidden = true;
+            save.hidden = true;
+            cancel.hidden = true;
+            toggle.hidden = false;
+          });
+        });
+      })();
+    </script>
   {% endif %}
   </div>
 {% endblock %}

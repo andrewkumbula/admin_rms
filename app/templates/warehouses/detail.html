@@ -22,12 +22,61 @@
     {% set providers = warehouse.providers if warehouse.providers else [] %}
     {% set existing_codes = providers | map(attribute='provider') | list %}
 
-    <h1>{{ warehouse.name or "Склад" }}</h1>
+    <h1 style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+      <span>{{ warehouse.name or "Склад" }}</span>
+      {% if can_update %}
+        <button type="button" class="btn-secondary" id="toggle-warehouse-name-edit">Изменить название</button>
+      {% endif %}
+    </h1>
+    {% if can_update %}
+      <form
+        method="post"
+        action="/warehouses/{{ uid }}/patch"
+        id="warehouse-name-edit-form"
+        style="display:none; margin:0 0 12px 0;"
+      >
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+        <input
+          name="name"
+          type="text"
+          required
+          style="width:100%; max-width:360px;"
+          value="{{ warehouse.name or '' }}"
+          aria-label="Новое название склада"
+        />
+        <button type="submit" class="btn-secondary" style="margin-left:8px;">Сохранить</button>
+      </form>
+    {% endif %}
 
     <div class="card">
       <h3 style="margin-top:0;">Основное</h3>
       <p><strong>UID:</strong> <span class="col-mono" style="font-size:0.85rem;">{{ warehouse.uid or uid }}</span></p>
-      <p><strong>acceptance_time:</strong> {{ warehouse.acceptance_time if warehouse.acceptance_time is defined else "—" }}</p>
+      <p>
+        <strong>acceptance_time:</strong>
+        {{ warehouse.acceptance_time if warehouse.acceptance_time is defined else "—" }}
+        {% if can_update %}
+          <button type="button" class="btn-secondary" id="toggle-warehouse-acceptance-edit" style="margin-left:10px;">Изменить</button>
+        {% endif %}
+      </p>
+      {% if can_update %}
+        <form
+          method="post"
+          action="/warehouses/{{ uid }}/patch"
+          id="warehouse-acceptance-edit-form"
+          style="display:none; margin:8px 0 0 0;"
+        >
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <input
+            id="acceptance_time_inline"
+            name="acceptance_time"
+            type="text"
+            style="width:110px;"
+            value="{{ warehouse.acceptance_time if warehouse.acceptance_time is defined else '' }}"
+            aria-label="Изменить acceptance_time"
+          />
+          <button type="submit" class="btn-secondary" style="margin-left:8px;">Сохранить</button>
+        </form>
+      {% endif %}
       <p><strong>СЦ:</strong>
         {% if warehouse.service_center and warehouse.service_center.service_center_uid %}
           <a href="/service_centers/{{ warehouse.service_center.service_center_uid }}">{{ warehouse.service_center.name or warehouse.service_center.service_center_uid }}</a>
@@ -139,25 +188,6 @@
       {% endif %}
     </div>
 
-    {% if can_update %}
-      <div class="card">
-        <h2 style="margin-top:0;">Название и время приёмки</h2>
-        <p class="muted">RMS вернёт 422, если значения совпадают с текущими — измените хотя бы одно поле.</p>
-        <form method="post" action="/warehouses/{{ uid }}/patch">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
-          <p>
-            <label for="name">Название</label><br />
-            <input id="name" name="name" type="text" style="width:100%; max-width:400px;" value="{{ warehouse.name or '' }}" />
-          </p>
-          <p>
-            <label for="acceptance_time">acceptance_time</label><br />
-            <input id="acceptance_time" name="acceptance_time" type="text" style="width:120px;" value="{{ warehouse.acceptance_time if warehouse.acceptance_time is defined else '' }}" />
-          </p>
-          <button type="submit">Сохранить</button>
-        </form>
-      </div>
-    {% endif %}
-
     {% if can_delete %}
       <div class="card card-zone-danger">
         <h2 style="margin-top:0;">Удаление</h2>
@@ -168,6 +198,26 @@
         </form>
       </div>
     {% endif %}
+  {% endif %}
+  {% if can_update %}
+    <script>
+      (function () {
+        const btn = document.getElementById("toggle-warehouse-name-edit");
+        const form = document.getElementById("warehouse-name-edit-form");
+        if (btn && form) {
+          btn.addEventListener("click", function () {
+            form.style.display = form.style.display === "none" ? "" : "none";
+          });
+        }
+        const acceptanceBtn = document.getElementById("toggle-warehouse-acceptance-edit");
+        const acceptanceForm = document.getElementById("warehouse-acceptance-edit-form");
+        if (acceptanceBtn && acceptanceForm) {
+          acceptanceBtn.addEventListener("click", function () {
+            acceptanceForm.style.display = acceptanceForm.style.display === "none" ? "" : "none";
+          });
+        }
+      })();
+    </script>
   {% endif %}
   {% if can_manage_external %}
     <script>
