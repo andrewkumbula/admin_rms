@@ -3,7 +3,7 @@
   <p class="toolbar">
     <a class="back-link" href="/warehouses">← К списку складов</a>
     <span class="muted">·</span>
-    <a href="/warehouses/delivery_routes">Маршруты и карты</a>
+    <a href="/warehouses/delivery_routes">Межскладские перемещения</a>
   </p>
 
   {% if wh_msg %}
@@ -52,7 +52,7 @@
       <h3 style="margin-top:0;">Основное</h3>
       <p><strong>UID:</strong> <span class="col-mono" style="font-size:0.85rem;">{{ warehouse.uid or uid }}</span></p>
       <p>
-        <strong>acceptance_time:</strong>
+        <strong>время приемки:</strong>
         {{ warehouse.acceptance_time if warehouse.acceptance_time is defined else "—" }}
         {% if can_update %}
           <button type="button" class="btn-secondary" id="toggle-warehouse-acceptance-edit" style="margin-left:10px;">Изменить</button>
@@ -72,7 +72,7 @@
             type="text"
             style="width:110px;"
             value="{{ warehouse.acceptance_time if warehouse.acceptance_time is defined else '' }}"
-            aria-label="Изменить acceptance_time"
+            aria-label="Изменить время приемки"
           />
           <button type="submit" class="btn-secondary" style="margin-left:8px;">Сохранить</button>
         </form>
