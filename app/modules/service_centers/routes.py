@@ -140,6 +140,16 @@ def _redirect_detail(uid: str, tab: str, message: Optional[str] = None, msg_type
     return url_for("service_centers.detail_page", **kwargs)
 
 
+def _redirect_employee_detail(
+    uid: str, sso_id: str, message: Optional[str] = None, msg_type: str = "info"
+) -> str:
+    kwargs: Dict[str, Any] = {"uid": uid, "sso_id": sso_id}
+    if message:
+        kwargs["sc_msg"] = message
+        kwargs["sc_msg_type"] = msg_type
+    return url_for("service_centers.employee_detail_page", **kwargs)
+
+
 def _extract_franchisees_payload(payload: Any) -> list:
     if isinstance(payload, list):
         return payload
@@ -482,9 +492,7 @@ def detail_page(uid: str):
     client = RMSClient()
 
     sc_resp = client.get(f"/api/v1/service_center/{uid}")
-    employees_resp = client.get(
-        f"/api/v1/service_center/{uid}/employee", params={"limit": RMS_LIST_PAGE_LIMIT}
-    )
+    all_employee_items, employees_error, employees_status = _fetch_service_center_employees(client, uid)
     equipment_resp = client.get(
         f"/api/v1/service_center/{uid}/equipment", params={"limit": RMS_LIST_PAGE_LIMIT}
     )
@@ -497,9 +505,6 @@ def detail_page(uid: str):
     global_schedule_items: List[Dict[str, Any]] = _fetch_global_schedule_rows(client) if tab == "schedule" else []
     effective_schedule_items = (
         _build_effective_schedule_rows(global_schedule_items, schedule_items) if tab == "schedule" else []
-    )
-    all_employee_items = _extract_list(
-        employees_resp.data, ["service_centers", "employees", "resources", "items"]
     )
     employee_items: List[Dict[str, Any]] = []
     external_employee_items: List[Dict[str, Any]] = []
@@ -534,30 +539,31 @@ def detail_page(uid: str):
                     seen.add(k)
                     uniq.append(x)
                 row["resource_type_label"] = ", ".join(uniq)
+                employee_items.append(row)
                 continue
         rt = row.get("resource_type")
         if isinstance(rt, str) and rt.strip():
             rt_str = rt.strip()
             row["resource_type_label"] = employee_rt_labels.get(rt_str, rt_str)
+            employee_items.append(row)
             continue
         if isinstance(rt, dict):
             child = str(rt.get("children_resource_type") or "").strip()
             parent = str(rt.get("parent_resource_type") or "").strip()
             if child or parent:
                 row["resource_type_label"] = child or parent
+                employee_items.append(row)
                 continue
         child = str(row.get("children_resource_type") or row.get("resource_type_name") or "").strip()
         parent = str(row.get("parent_resource_type") or "").strip()
         if child or parent:
             row["resource_type_label"] = child or parent
+            employee_items.append(row)
             continue
         rt_uid = str(row.get("resource_type_uid") or row.get("resource_uid") or "").strip()
         if rt_uid:
             row["resource_type_label"] = employee_rt_labels.get(rt_uid, rt_uid)
-        if bool(row.get("is_external")):
-            external_employee_items.append(row)
-        else:
-            employee_items.append(row)
+        employee_items.append(row)
     equipment_items = _extract_list(
         equipment_resp.data, ["service_centers", "equipment", "items"]
     )
@@ -781,7 +787,9 @@ def detail_page(uid: str):
 
     errors = [
         f"service_center: {sc_resp.error}" if not sc_resp.ok and sc_resp.error else None,
-        f"employees: {employees_resp.error}" if not employees_resp.ok and employees_resp.error else None,
+        f"employees: {employees_error}"
+        if employees_error and employees_status is not None and employees_status != 404
+        else None,
         f"equipment: {equipment_resp.error}" if not equipment_resp.ok and equipment_resp.error else None,
         f"day_offs: {day_offs_resp.error}"
         if not day_offs_resp.ok and day_offs_resp.status_code != 404 and day_offs_resp.error
@@ -808,6 +816,7 @@ def detail_page(uid: str):
         global_schedule_items=global_schedule_items,
         effective_schedule_items=effective_schedule_items,
         employee_items=employee_items,
+        all_employee_items_count=len(all_employee_items) if isinstance(all_employee_items, list) else 0,
         equipment_items=equipment_items,
         can_manage_equipment=can_manage_equipment,
         can_manage_external_employee=can_manage_external_employee,
@@ -1107,6 +1116,124 @@ def _extract_list(payload: dict, keys: list[str]) -> list:
     return []
 
 
+def _extract_service_center_employees(payload: Any) -> List[Dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+
+    def _dict_rows(value: Any) -> List[Dict[str, Any]]:
+        return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
+
+    # RMS иногда возвращает payload как {"data": ...}, а иногда плоско на верхнем уровне.
+    roots: List[Any] = [payload.get("data"), payload]
+    seen_ids: set[int] = set()
+    for root in roots:
+        if id(root) in seen_ids:
+            continue
+        seen_ids.add(id(root))
+
+        if isinstance(root, list):
+            rows = _dict_rows(root)
+            if rows:
+                return rows
+            continue
+        if not isinstance(root, dict):
+            continue
+
+        # Прямые поля.
+        for key in ("employees", "employee", "resources", "items", "data"):
+            rows = _dict_rows(root.get(key))
+            if rows:
+                return rows
+
+        # Вложенный service_center.
+        service_center_obj = root.get("service_center")
+        if isinstance(service_center_obj, dict):
+            for key in ("employees", "employee", "resources", "items"):
+                rows = _dict_rows(service_center_obj.get(key))
+                if rows:
+                    return rows
+
+        # Массив service_centers.
+        service_centers = root.get("service_centers")
+        if isinstance(service_centers, list):
+            # В некоторых ответах RMS data.service_centers уже содержит строки сотрудников.
+            direct_rows = [row for row in service_centers if isinstance(row, dict)]
+            if direct_rows and any(
+                any(k in row for k in ("sso_id", "resource_types", "service_center_uid")) for row in direct_rows
+            ):
+                return direct_rows
+            rows: List[Dict[str, Any]] = []
+            for sc in service_centers:
+                if not isinstance(sc, dict):
+                    continue
+                for key in ("employees", "employee", "resources", "items"):
+                    part = _dict_rows(sc.get(key))
+                    if part:
+                        rows.extend(part)
+                        break
+            if rows:
+                return rows
+
+    # Последний fallback: рекурсивно найти список объектов, похожих на сотрудников.
+    def _looks_like_employee(row: Dict[str, Any]) -> bool:
+        return any(k in row for k in ("sso_id", "employee_uid", "resource_type_uid", "is_external"))
+
+    def _scan(node: Any) -> List[Dict[str, Any]]:
+        if isinstance(node, dict):
+            local: List[Dict[str, Any]] = []
+            for v in node.values():
+                if isinstance(v, list):
+                    dict_rows = [r for r in v if isinstance(r, dict)]
+                    if dict_rows and any(_looks_like_employee(r) for r in dict_rows):
+                        local.extend(dict_rows)
+                elif isinstance(v, (dict, list)):
+                    local.extend(_scan(v))
+            return local
+        if isinstance(node, list):
+            local: List[Dict[str, Any]] = []
+            for v in node:
+                if isinstance(v, (dict, list)):
+                    local.extend(_scan(v))
+            return local
+        return []
+
+    recursive_rows = _scan(payload)
+    if recursive_rows:
+        return recursive_rows
+    return []
+
+
+def _fetch_service_center_employees(
+    client: RMSClient, uid: str
+) -> Tuple[List[Dict[str, Any]], Optional[str], Optional[int]]:
+    candidates: List[Tuple[str, Dict[str, Any]]] = [
+        (f"/api/v1/service_center/{uid}/employee", {"limit": RMS_LIST_PAGE_LIMIT}),
+        (f"/api/v2/service_center/{uid}/employee", {"limit": RMS_LIST_PAGE_LIMIT}),
+        ("/api/v1/employee", {"limit": RMS_LIST_PAGE_LIMIT, "service_center_uid": uid}),
+    ]
+    last_error: Optional[str] = None
+    last_status: Optional[int] = None
+    for path, params in candidates:
+        resp = client.get(path, params=params)
+        if not resp.ok:
+            last_error = resp.error
+            last_status = resp.status_code
+            continue
+        rows = _extract_service_center_employees(resp.data)
+        if rows:
+            return rows, None, None
+        if path == f"/api/v1/service_center/{uid}/employee":
+            data = resp.data if isinstance(resp.data, dict) else {}
+            data_block = data.get("data") if isinstance(data, dict) else None
+            top_keys = sorted(list(data.keys())) if isinstance(data, dict) else []
+            data_keys = sorted(list(data_block.keys())) if isinstance(data_block, dict) else []
+            print(
+                f"[DEBUG-sc-employees] empty list for {uid}; "
+                f"v1 status={resp.status_code}; top_keys={top_keys}; data_keys={data_keys}"
+            )
+    return [], last_error, last_status
+
+
 def _extract_page_metadata(payload: Any) -> Dict[str, Any]:
     if not isinstance(payload, dict):
         return {"next_cursor": "", "has_more": False}
@@ -1257,6 +1384,107 @@ def employee_create(uid: str):
     if resp.ok:
         return redirect(_redirect_detail(uid, "employees", "Сотрудник добавлен", "success"))
     return redirect(_redirect_detail(uid, "employees", resp.error or "Ошибка добавления сотрудника", "error"))
+
+
+@bp.get("/<uid>/employee/<sso_id>")
+@require_permission("service_center.read")
+def employee_detail_page(uid: str, sso_id: str):
+    client = RMSClient()
+    sc_employee_resp = client.get(
+        f"/api/v1/service_center/{uid}/employee",
+        params={"limit": RMS_LIST_PAGE_LIMIT},
+    )
+    employee_data: Dict[str, Any] = {}
+    if sc_employee_resp.ok:
+        sc_rows = _extract_service_center_employees(sc_employee_resp.data)
+        for row in sc_rows:
+            if not isinstance(row, dict):
+                continue
+            row_sso = str(row.get("sso_id") or "").strip()
+            if row_sso == sso_id:
+                employee_data = row
+                break
+
+    employee_resp = client.get(f"/api/v1/employee/{sso_id}") if not employee_data else None
+    if not employee_data and employee_resp and employee_resp.ok:
+        employee_data = _extract_object(employee_resp.data)
+
+    rt_labels = _fetch_resource_type_labels(client) if employee_data else {}
+    employee_resource_options: List[Dict[str, str]] = (
+        _fetch_employee_resource_options(client, external=False) if has_permission("service_center.update") else []
+    )
+    selected_resource_types: List[Dict[str, str]] = []
+    rt_list = employee_data.get("resource_types")
+    if isinstance(rt_list, list):
+        for row in rt_list:
+            if not isinstance(row, dict):
+                continue
+            rt_uid = str(row.get("resource_type_uid") or row.get("uid") or "").strip()
+            rt_name = str(row.get("resource_type") or "").strip()
+            if not rt_uid and not rt_name:
+                continue
+            label = rt_name or rt_labels.get(rt_uid, rt_uid)
+            selected_resource_types.append({"uid": rt_uid, "label": label})
+
+    if not selected_resource_types:
+        rt_uid = str(employee_data.get("resource_type_uid") or "").strip()
+        rt_name = str(employee_data.get("resource_type") or "").strip()
+        if rt_uid or rt_name:
+            selected_resource_types.append({"uid": rt_uid, "label": rt_name or rt_labels.get(rt_uid, rt_uid)})
+
+    errors = [
+        f"service_center_employee: {sc_employee_resp.error}"
+        if not employee_data and not sc_employee_resp.ok and sc_employee_resp.error
+        else None,
+        f"employee: {employee_resp.error}"
+        if not employee_data and employee_resp and not employee_resp.ok and employee_resp.error
+        else None,
+    ]
+    return render_template(
+        "service_centers/employee_detail.html",
+        uid=uid,
+        sso_id=sso_id,
+        employee=employee_data,
+        selected_resource_types=selected_resource_types,
+        employee_resource_options=employee_resource_options,
+        can_mutate_sc=has_permission("service_center.update"),
+        errors=[e for e in errors if e],
+        sc_msg=request.args.get("sc_msg"),
+        sc_msg_type=request.args.get("sc_msg_type") or "info",
+    )
+
+
+@bp.post("/<uid>/employee/<sso_id>/resource_type/add")
+@require_permission("service_center.update")
+def employee_add_resource_type(uid: str, sso_id: str):
+    resource_type_uid = (request.form.get("resource_type_uid") or "").strip()
+    if not resource_type_uid:
+        return redirect(_redirect_employee_detail(uid, sso_id, "Выберите тип ресурса", "error"))
+    client = RMSClient()
+    resp = client.patch(
+        f"/api/v1/employee/{sso_id}",
+        json={"resource_type_uid": resource_type_uid},
+    )
+    if resp.ok:
+        return redirect(_redirect_employee_detail(uid, sso_id, "Роль сотрудника добавлена", "success"))
+    return redirect(
+        _redirect_employee_detail(uid, sso_id, resp.error or "Ошибка добавления роли сотрудника", "error")
+    )
+
+
+@bp.post("/<uid>/employee/<sso_id>/resource_type/delete")
+@require_permission("service_center.update")
+def employee_delete_resource_type(uid: str, sso_id: str):
+    resource_type_uid = (request.form.get("resource_type_uid") or "").strip()
+    if not resource_type_uid:
+        return redirect(_redirect_employee_detail(uid, sso_id, "Укажите resource_type_uid для удаления", "error"))
+    client = RMSClient()
+    resp = client.delete(f"/api/v1/employee/{sso_id}/resource_type/{resource_type_uid}")
+    if resp.ok:
+        return redirect(_redirect_employee_detail(uid, sso_id, "Связь роли удалена", "success"))
+    return redirect(
+        _redirect_employee_detail(uid, sso_id, resp.error or "Ошибка удаления связи роли", "error")
+    )
 
 
 @bp.post("/<uid>/external_employee/create")

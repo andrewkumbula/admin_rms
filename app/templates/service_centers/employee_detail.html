@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block content %}
+  <p class="toolbar">
+    <a class="back-link" href="/service_centers/{{ uid }}?tab=employees">← К сотрудникам сервисного центра</a>
+  </p>
+  <h1>Сотрудник {{ employee.name or employee.full_name or sso_id }}</h1>
+
+  {% if errors %}
+    <div class="alert alert-error">
+      <strong>Ошибки загрузки</strong>
+      <ul>
+        {% for err in errors %}
+          <li>{{ err }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  {% if sc_msg %}
+    <div class="alert {% if sc_msg_type == 'error' %}alert-error{% elif sc_msg_type == 'success' %}alert-success{% else %}alert-info{% endif %}">
+      {{ sc_msg }}
+    </div>
+  {% endif %}
+
+  <div class="card">
+    <h3>Детали сотрудника</h3>
+    <p><strong>SSO ID:</strong> <span class="col-mono">{{ employee.sso_id or sso_id }}</span></p>
+    <p><strong>Имя:</strong> {{ employee.name or employee.full_name or "—" }}</p>
+    <p><strong>Доступен:</strong> {{ employee.is_available if employee.is_available is not none else "—" }}</p>
+    <p><strong>Внешний:</strong> {{ "Да" if employee.is_external else "Нет" }}</p>
+  </div>
+
+  <div class="card">
+    <h3>Роли сотрудника (resource types)</h3>
+    {% if not selected_resource_types %}
+      <p class="muted">Связи с типами ресурсов не найдены.</p>
+    {% else %}
+      <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th class="col-num">№</th>
+              <th>Тип ресурса</th>
+              <th class="col-mono">resource_type_uid</th>
+              {% if can_mutate_sc %}<th></th>{% endif %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for rt in selected_resource_types %}
+              <tr>
+                <td class="col-num">{{ loop.index }}</td>
+                <td>{{ rt.label or "—" }}</td>
+                <td class="col-mono">{{ rt.uid or "—" }}</td>
+                {% if can_mutate_sc %}
+                  <td>
+                    {% if rt.uid %}
+                      <form
+                        method="post"
+                        action="/service_centers/{{ uid }}/employee/{{ sso_id }}/resource_type/delete"
+                        onsubmit="return confirm('Удалить связь роли {{ (rt.label or rt.uid)|e }} у сотрудника {{ (employee.name or employee.full_name or sso_id)|e }}?');"
+                      >
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                        <input type="hidden" name="resource_type_uid" value="{{ rt.uid }}" />
+                        <button type="submit" class="btn-secondary">Удалить роль</button>
+                      </form>
+                    {% else %}
+                      <span class="muted">—</span>
+                    {% endif %}
+                  </td>
+                {% endif %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </div>
+
+  {% if can_mutate_sc %}
+    <div class="card">
+      <h4>Добавить роль сотруднику</h4>
+      <p class="muted">API: <code>PATCH /api/v1/employee/{sso_id}</code> с <code>resource_type_uid</code>.</p>
+      <form method="post" action="/service_centers/{{ uid }}/employee/{{ sso_id }}/resource_type/add">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+        <label>Тип ресурса
+          <select name="resource_type_uid" required style="min-width: 340px; max-width: 100%;">
+            <option value="">— выберите тип ресурса —</option>
+            {% for rt in employee_resource_options %}
+              <option value="{{ rt.uid }}">{{ rt.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button type="submit" style="margin-left: 12px;">Добавить роль</button>
+      </form>
+    </div>
+  {% endif %}
+{% endblock %}
