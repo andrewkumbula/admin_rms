@@ -1,4 +1,6 @@
 import json
+import os
+import statistics
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 from functools import lru_cache
@@ -11,11 +13,30 @@ from app.rbac.decorators import require_permission
 
 bp = Blueprint("analytics", __name__, url_prefix="/analytics")
 
-JSON_DIR = Path(__file__).resolve().parents[3] / "JSON"
+# Снимок БД: по умолчанию «JSON 2» в корне репозитория (свежее, чем admin-panel-flask/JSON).
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+JSON_DIR = Path(
+    os.environ.get("RMS_JSON_DATA_DIR", str(_REPO_ROOT / "JSON 2"))
+).expanduser().resolve()
 SLOT_MINUTES_DEFAULT = 60
 MAX_DAYS = 31
 DAY_START = time(9, 0)
 DAY_END = time(20, 0)
+
+# Период по умолчанию для метрики лид-тайма (более длинное окно, чем для load).
+LEAD_TIME_DEFAULT_DAYS = 30
+LEAD_TIME_MAX_DAYS = 365
+# Корзины распределения lead time (в календарных днях).
+LEAD_TIME_BUCKETS: Tuple[Tuple[str, int, int], ...] = (
+    ("today", 0, 0),
+    ("+1", 1, 1),
+    ("+2", 2, 2),
+    ("+3", 3, 3),
+    ("+4..+7", 4, 7),
+    ("+8..+14", 8, 14),
+    ("+15..+30", 15, 30),
+    ("+31+", 31, 10**6),
+)
 
 
 def _safe_parse_dt(raw: Any) -> Optional[datetime]:
@@ -1033,4 +1054,203 @@ def resource_load_page():
         wz_bucket_stats=wz_bucket_stats,
         has_data=bool(timeseries),
         mechanic_forecast=mechanic_forecast,
+    )
+
+
+def _bucket_label_for_lead(days: int) -> str:
+    for label, lo, hi in LEAD_TIME_BUCKETS:
+        if lo <= days <= hi:
+            return label
+    return "+31+"
+
+
+def _percentile(sorted_values: List[int], pct: float) -> Optional[float]:
+    if not sorted_values:
+        return None
+    if len(sorted_values) == 1:
+        return float(sorted_values[0])
+    k = (len(sorted_values) - 1) * pct
+    f = int(k)
+    c = min(f + 1, len(sorted_values) - 1)
+    if f == c:
+        return float(sorted_values[f])
+    return sorted_values[f] + (sorted_values[c] - sorted_values[f]) * (k - f)
+
+
+@bp.get("/slot_lead_time")
+@require_permission("appointment.read")
+def slot_lead_time_page():
+    """
+    Сколько дней вперёд в среднем мы отдаём слоты.
+    Считаем по реальным записям: lead = start_time.date() - created_at.date() (календарные дни).
+    """
+    sc_uid = (request.args.get("sc_uid") or "").strip()
+    date_from_raw = (request.args.get("date_from") or "").strip()
+    date_to_raw = (request.args.get("date_to") or "").strip()
+    exclude_negative_raw = (request.args.get("exclude_negative") or "1").strip().lower()
+    exclude_negative = exclude_negative_raw not in {"0", "false", "no", "off", ""}
+
+    today = date.today()
+    default_to = today
+    default_from = today - timedelta(days=LEAD_TIME_DEFAULT_DAYS - 1)
+    try:
+        date_from = date.fromisoformat(date_from_raw) if date_from_raw else default_from
+    except ValueError:
+        date_from = default_from
+    try:
+        date_to = date.fromisoformat(date_to_raw) if date_to_raw else default_to
+    except ValueError:
+        date_to = default_to
+    if date_to < date_from:
+        date_to = date_from
+    if (date_to - date_from).days + 1 > LEAD_TIME_MAX_DAYS:
+        date_from = date_to - timedelta(days=LEAD_TIME_MAX_DAYS - 1)
+
+    service_centers = _read_json("service_centers.json")
+    sc_options: List[Dict[str, str]] = []
+    sc_name_by_uid: Dict[str, str] = {}
+    for row in service_centers:
+        if not isinstance(row, dict):
+            continue
+        uid = str(row.get("uid") or "").strip()
+        if not uid:
+            continue
+        label = str(row.get("name") or uid)
+        sc_options.append({"uid": uid, "label": label})
+        sc_name_by_uid[uid] = label
+    sc_options.sort(key=lambda x: str(x["label"]).casefold())
+
+    appointments = _read_json("appointments.json")
+
+    leads: List[int] = []
+    leads_with_negative: List[int] = []
+    negative_count = 0
+    daily_acc: Dict[str, List[int]] = defaultdict(list)
+    sc_acc: Dict[str, List[int]] = defaultdict(list)
+    deleted_count = 0
+    bucket_counts: Dict[str, int] = {label: 0 for label, _, _ in LEAD_TIME_BUCKETS}
+
+    for row in appointments:
+        if not isinstance(row, dict):
+            continue
+        if bool(row.get("is_deleted")):
+            deleted_count += 1
+            continue
+        created = _safe_parse_dt(row.get("created_at"))
+        start = _safe_parse_dt(row.get("start_time"))
+        if not created or not start:
+            continue
+        created_day = created.date()
+        if created_day < date_from or created_day > date_to:
+            continue
+        sc_row_uid = str(row.get("service_center_uid") or "").strip()
+        if sc_uid and sc_row_uid != sc_uid:
+            continue
+
+        delta_days = (start.date() - created_day).days
+        leads_with_negative.append(delta_days)
+        if delta_days < 0:
+            negative_count += 1
+            if exclude_negative:
+                continue
+        leads.append(delta_days)
+        bucket_counts[_bucket_label_for_lead(delta_days)] += 1
+        daily_acc[created_day.isoformat()].append(delta_days)
+        if sc_row_uid:
+            sc_acc[sc_row_uid].append(delta_days)
+
+    sorted_leads = sorted(leads)
+    total = len(sorted_leads)
+    avg_lead = round(sum(sorted_leads) / total, 2) if total else 0.0
+    median_lead = (
+        statistics.median(sorted_leads) if total else 0
+    )
+    p90 = _percentile(sorted_leads, 0.9)
+    p80 = _percentile(sorted_leads, 0.8)
+    p70 = _percentile(sorted_leads, 0.7)
+    p60 = _percentile(sorted_leads, 0.6)
+    p50 = _percentile(sorted_leads, 0.5)
+
+    bucket_total = sum(bucket_counts.values()) or 1
+    distribution = []
+    for label, lo, hi in LEAD_TIME_BUCKETS:
+        cnt = bucket_counts.get(label, 0)
+        distribution.append(
+            {
+                "label": label,
+                "lo": lo,
+                "hi": hi,
+                "count": cnt,
+                "pct": round(cnt / bucket_total * 100, 1) if bucket_total else 0.0,
+            }
+        )
+
+    daily_chart = []
+    for day_key in sorted(daily_acc.keys()):
+        values = daily_acc[day_key]
+        if not values:
+            continue
+        avg = round(sum(values) / len(values), 2)
+        daily_chart.append(
+            {
+                "day": day_key,
+                "count": len(values),
+                "avg_lead_days": avg,
+                "min_lead_days": min(values),
+                "max_lead_days": max(values),
+            }
+        )
+
+    sc_rows = []
+    for sc_row_uid, values in sc_acc.items():
+        if not values:
+            continue
+        sorted_v = sorted(values)
+        sc_rows.append(
+            {
+                "service_center_uid": sc_row_uid,
+                "service_center_name": sc_name_by_uid.get(sc_row_uid, sc_row_uid),
+                "appointments": len(values),
+                "avg_lead_days": round(sum(values) / len(values), 2),
+                "median_lead_days": statistics.median(sorted_v),
+                "p90_lead_days": _percentile(sorted_v, 0.9),
+            }
+        )
+    sc_rows.sort(key=lambda x: x["avg_lead_days"], reverse=True)
+
+    period_days = (date_to - date_from).days + 1
+    bookings_per_day = round(total / period_days, 2) if period_days > 0 else 0.0
+
+    return render_template(
+        "analytics/slot_lead_time.html",
+        filters={
+            "sc_uid": sc_uid,
+            "date_from": date_from.isoformat(),
+            "date_to": date_to.isoformat(),
+            "exclude_negative": exclude_negative,
+        },
+        sc_options=sc_options,
+        selected_sc_label=sc_name_by_uid.get(sc_uid, "") if sc_uid else "",
+        kpi={
+            "appointments_total": total,
+            "appointments_total_with_negative": len(leads_with_negative),
+            "deleted_skipped": deleted_count,
+            "negative_count": negative_count,
+            "avg_lead_days": avg_lead,
+            "median_lead_days": median_lead,
+            "p50_lead_days": round(p50, 2) if p50 is not None else 0.0,
+            "p60_lead_days": round(p60, 2) if p60 is not None else 0.0,
+            "p70_lead_days": round(p70, 2) if p70 is not None else 0.0,
+            "p80_lead_days": round(p80, 2) if p80 is not None else 0.0,
+            "p90_lead_days": round(p90, 2) if p90 is not None else 0.0,
+            "min_lead_days": sorted_leads[0] if sorted_leads else 0,
+            "max_lead_days": sorted_leads[-1] if sorted_leads else 0,
+            "bookings_per_day": bookings_per_day,
+            "period_days": period_days,
+        },
+        distribution=distribution,
+        daily_chart=daily_chart,
+        sc_rows=sc_rows[:50],
+        sc_rows_total=len(sc_rows),
+        has_data=total > 0,
     )

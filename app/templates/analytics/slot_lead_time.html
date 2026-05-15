@@ -1,0 +1,240 @@
+{% extends "base.html" %}
+{% block title %}Лид-тайм слотов · RMS Admin{% endblock %}
+{% block content %}
+  <div class="card">
+    <nav class="tab-bar" aria-label="Разделы аналитики">
+      <a href="/analytics/resource_load" class="{% if request.path == '/analytics/resource_load' %}active{% endif %}">Загрузка ресурсов</a>
+      <a href="/analytics/slot_lead_time" class="{% if request.path == '/analytics/slot_lead_time' %}active{% endif %}">Лид-тайм слотов</a>
+    </nav>
+  </div>
+
+  <h1>Лид-тайм слотов</h1>
+  <p class="muted" style="margin-top: 0">
+    Сколько в среднем дней проходит между моментом бронирования (<code>created_at</code>)
+    и назначенной датой слота (<code>start_time</code>). Считаем по записям, где не <code>is_deleted</code>.
+  </p>
+
+  <div class="card data-page">
+    <form method="get" action="/analytics/slot_lead_time" class="data-filters">
+      <label>
+        Сервисный центр
+        <select name="sc_uid">
+          <option value="">— все СЦ —</option>
+          {% for sc in sc_options %}
+            <option value="{{ sc.uid }}" {% if filters.sc_uid == sc.uid %}selected{% endif %}>{{ sc.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        Период бронирований (от)
+        <input type="date" name="date_from" value="{{ filters.date_from }}" />
+      </label>
+      <label>
+        до
+        <input type="date" name="date_to" value="{{ filters.date_to }}" />
+      </label>
+      <label class="chk-row">
+        <input type="checkbox" name="exclude_negative" value="1" {% if filters.exclude_negative %}checked{% endif %} />
+        Исключить lead time &lt; 0
+      </label>
+      <button type="submit">Применить</button>
+    </form>
+  </div>
+
+  {% if not has_data %}
+    <div class="alert alert-info">
+      За выбранный период подходящих записей не нашлось. Попробуйте расширить период или снять фильтр СЦ.
+    </div>
+  {% else %}
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-value">+{{ kpi.avg_lead_days }} дн.</div>
+        <div class="stat-label">Среднее</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">+{{ kpi.median_lead_days }} дн.</div>
+        <div class="stat-label">Медиана</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">+{{ kpi.p50_lead_days }} дн.</div>
+        <div class="stat-label">P50 (50-й перцентиль)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">+{{ kpi.p60_lead_days }} дн.</div>
+        <div class="stat-label">P60 (60-й перцентиль)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">+{{ kpi.p70_lead_days }} дн.</div>
+        <div class="stat-label">P70 (70-й перцентиль)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">+{{ kpi.p80_lead_days }} дн.</div>
+        <div class="stat-label">P80 (80-й перцентиль)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">+{{ kpi.p90_lead_days }} дн.</div>
+        <div class="stat-label">P90 (в 9 случаях из 10 — не позже)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">{{ kpi.appointments_total }}</div>
+        <div class="stat-label">Записей в выборке</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">{{ kpi.bookings_per_day }}</div>
+        <div class="stat-label">Бронирований в день</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">+{{ kpi.min_lead_days }} … +{{ kpi.max_lead_days }}</div>
+        <div class="stat-label">Диапазон lead time</div>
+      </div>
+    </div>
+
+    {% if kpi.negative_count > 0 %}
+      <div class="alert alert-warning" style="margin-top: 14px">
+        Найдено <strong>{{ kpi.negative_count }}</strong> записей с lead time &lt; 0
+        (бронь создана позже даты слота — например, ручная фиксация задним числом).
+        {% if filters.exclude_negative %}
+          Они исключены из расчёта средних.
+        {% else %}
+          Они учитываются в текущем расчёте.
+        {% endif %}
+      </div>
+    {% endif %}
+
+    <div class="card">
+      <h3>Распределение lead time</h3>
+      <p class="muted" style="margin-top: 0">
+        Сколько бронирований попало в каждую корзину «на сколько дней вперёд».
+      </p>
+      <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Корзина</th>
+              <th class="col-num" style="text-align: right">Записей</th>
+              <th class="col-num" style="text-align: right">Доля</th>
+              <th>Доля визуально</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for bucket in distribution %}
+              <tr>
+                <td><strong>{{ bucket.label }}</strong></td>
+                <td class="col-num">{{ bucket.count }}</td>
+                <td class="col-num">{{ bucket.pct }}%</td>
+                <td>
+                  <div style="background: #eef2ff; border-radius: 6px; height: 14px; width: 100%; max-width: 320px; overflow: hidden">
+                    <div style="height: 100%; width: {{ bucket.pct }}%; background: var(--primary)"></div>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Тренд по дням бронирования</h3>
+      <p class="muted" style="margin-top: 0">
+        Среднее lead time для записей, созданных в этот день. Помогает увидеть,
+        когда «зашиваемся» (lead time растёт).
+      </p>
+      {% set max_avg = (daily_chart | map(attribute='avg_lead_days') | list) %}
+      {% if max_avg %}
+        {% set _max = max_avg | max %}
+      {% else %}
+        {% set _max = 0 %}
+      {% endif %}
+      <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>День бронирования</th>
+              <th class="col-num" style="text-align: right">Записей</th>
+              <th class="col-num" style="text-align: right">Avg lead</th>
+              <th class="col-num" style="text-align: right">Min</th>
+              <th class="col-num" style="text-align: right">Max</th>
+              <th>Avg визуально</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in daily_chart %}
+              {% set ratio = (row.avg_lead_days / _max * 100) if _max and _max > 0 else 0 %}
+              <tr>
+                <td class="col-mono">{{ row.day }}</td>
+                <td class="col-num">{{ row.count }}</td>
+                <td class="col-num">+{{ row.avg_lead_days }} дн.</td>
+                <td class="col-num">{{ row.min_lead_days }}</td>
+                <td class="col-num">{{ row.max_lead_days }}</td>
+                <td>
+                  <div style="background: #ecfdf5; border-radius: 6px; height: 12px; width: 100%; max-width: 280px; overflow: hidden">
+                    <div style="height: 100%; width: {{ ratio }}%; background: #10b981"></div>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {% if not filters.sc_uid %}
+      <div class="card">
+        <h3>Разбивка по сервисным центрам</h3>
+        <p class="muted" style="margin-top: 0">
+          Топ-50 СЦ по среднему lead time за выбранный период
+          (всего СЦ с записями: {{ sc_rows_total }}).
+        </p>
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Сервисный центр</th>
+                <th class="col-num" style="text-align: right">Записей</th>
+                <th class="col-num" style="text-align: right">Avg lead</th>
+                <th class="col-num" style="text-align: right">Median</th>
+                <th class="col-num" style="text-align: right">P90</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in sc_rows %}
+                <tr>
+                  <td>
+                    <a href="/analytics/slot_lead_time?sc_uid={{ row.service_center_uid }}&date_from={{ filters.date_from }}&date_to={{ filters.date_to }}{% if filters.exclude_negative %}&exclude_negative=1{% endif %}">
+                      {{ row.service_center_name }}
+                    </a>
+                  </td>
+                  <td class="col-num">{{ row.appointments }}</td>
+                  <td class="col-num">+{{ row.avg_lead_days }} дн.</td>
+                  <td class="col-num">+{{ row.median_lead_days }}</td>
+                  <td class="col-num">+{{ '%.1f' | format(row.p90_lead_days) }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="card">
+      <h4>Как читать</h4>
+      <p class="muted" style="margin-top: 0">
+        Базовая формула для каждой записи:
+        <code>lead_time_days = date(start_time) - date(created_at)</code>.
+      </p>
+      <ul class="muted" style="margin: 0; padding-left: 1.2em">
+        <li><strong>Среднее</strong> — сумма всех lead time, делённая на число записей (чувствительно к выбросам).</li>
+        <li><strong>Медиана</strong> — значение посередине: у 50% записей lead time меньше или равен, у 50% — больше или равен.</li>
+        <li><strong>P50</strong> — 50-й перцентиль, по смыслу почти совпадает с медианой.</li>
+        <li><strong>P60 / P70 / P80</strong> — «мягкие» квантили для мониторинга хвоста: у 60%/70%/80% записей lead time не выше этого значения.</li>
+        <li><strong>P90</strong> — 90-й перцентиль: в 90% случаев слот выдаётся не позже этого значения.</li>
+        <li><strong>Диапазон</strong> — минимальный и максимальный lead time в выборке.</li>
+        <li>Метрика построена на исторических записях, поэтому она отражает <em>фактический</em>
+          опыт пользователя, а не гипотетический «что бы вернул API сегодня».</li>
+        <li>Записи с lead time &lt; 0 — это, как правило, ручные правки задним числом
+          (бронь создана позже даты обслуживания); по умолчанию они исключены.</li>
+      </ul>
+    </div>
+  {% endif %}
+{% endblock %}

@@ -160,6 +160,16 @@ def extract_roles_from_token(access_token: str) -> list[str]:
         return ["analyst"]
 
     realm_roles = claims.get("realm_access", {}).get("roles", [])
+    rms_roles = claims.get("rms-roles", [])
+    resource_access = claims.get("resource_access", {})
+    rms_api_roles = []
+    if isinstance(resource_access, dict):
+        rms_api = resource_access.get("rms-api", {})
+        if isinstance(rms_api, dict):
+            raw_roles = rms_api.get("roles", [])
+            if isinstance(raw_roles, list):
+                rms_api_roles = [str(r) for r in raw_roles if isinstance(r, str)]
+
     mapped = []
     if "super_admin" in realm_roles:
         mapped.append("super_admin")
@@ -169,6 +179,20 @@ def extract_roles_from_token(access_token: str) -> list[str]:
         mapped.append("sc_operator")
     if "analyst" in realm_roles:
         mapped.append("analyst")
+
+    # Токены dev/prod часто несут RMS-права как wildcard без app-ролей панели.
+    merged_rms_roles = set()
+    if isinstance(rms_roles, list):
+        merged_rms_roles.update(str(r) for r in rms_roles if isinstance(r, str))
+    merged_rms_roles.update(rms_api_roles)
+    if any(
+        role in {"rms-api:*:*", "rms-api::*", "rms-api:*"}
+        or role.startswith("rms-api:*:")
+        or role.startswith("rms-api::")
+        for role in merged_rms_roles
+    ):
+        mapped.append("super_admin")
+
     return mapped or ["analyst"]
 
 
